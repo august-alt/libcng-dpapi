@@ -1,0 +1,15 @@
+# CNG-DPAPI library cmake configuration file
+#
+# the following variables are defined:
+#   CNG_DPAPI_INCLUDE_DIR - location of the headers
+#   CNG_DPAPI_LIBRARY_DIR - location of the library
+#   CNG_DPAPI_LIBRARY     - CNG-DPAPI library name
+
+if(${CNG_DPAPI_IN_BUILD_TREE})
+  include("${CMAKE_BINARY_DIR}/CNGDpApiBuildTreeSettings.cmake")
+else()
+  set(CNG_DPAPI_INCLUDE_DIR ${CMAKE_INSTALL_INCLUDEDIR})
+  set(CNG_DPAPI_LIBRARY_DIR ${CMAKE_INSTALL_LIBDIR})
+endif()
+
+set(CNG_DPAPI_LIBRARY cng-dpapi)

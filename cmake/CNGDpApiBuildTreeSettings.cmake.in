@@ -1,0 +1,3 @@
+set(CNG_DPAPI_INCLUDE_DIR
+  ${CMAKE_SOURCE_DIR}/include
+)
