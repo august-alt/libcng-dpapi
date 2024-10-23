@@ -39,7 +39,7 @@ add_library(${LIBRARY_NAME} SHARED ${SOURCES})
 target_link_libraries(${LIBRARY_NAME} PUBLIC ${GKDI_LIBRARY})
 target_link_libraries(${LIBRARY_NAME} PUBLIC pkcs7)
 
-target_include_directories(${LIBRARY_NAME} PRIVATE "/usr/local/share/asn1c/")
+target_include_directories(${LIBRARY_NAME} PRIVATE "/usr/share/asn1c/")
 
 target_link_libraries(${LIBRARY_NAME} PUBLIC
     PkgConfig::Ndr
