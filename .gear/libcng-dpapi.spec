@@ -10,6 +10,7 @@ Group: Development
 Url: https://github.com/august-alt/libcng-dpapi
 
 BuildRequires: rpm-macros-cmake cmake cmake-modules gcc-c++
+BuildRequires: libkrb5-devel samba-devel samba-common-libs libgkdi-devel
 BuildRequires: doxygen
 
 Requires: cmake
