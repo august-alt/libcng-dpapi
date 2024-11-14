@@ -20,10 +20,11 @@
 
 #include "blob_p.h"
 
+#include <math.h>
 #include <stdbool.h>
+#include <string.h>
 
 #include <gkdi/ndr_gkdi.h>
-#include <string.h>
 
 #include <gnutls/gnutls.h>
 #include <gnutls/x509.h>
@@ -252,7 +253,7 @@ compute_l2_key(TALLOC_CTX* ctx,
         uint8_t* kdf_context = talloc_zero_array(ctx, uint8_t, kdf_context_size);
 
         calculate_kdf_context(ctx,
-                              &key_envelope->root_key_id,
+                              (uint8_t*)&key_envelope->root_key_id,
                               key_envelope->l0_index,
                               l1,
                               -1,
@@ -288,7 +289,7 @@ compute_l2_key(TALLOC_CTX* ctx,
         uint8_t* kdf_context = talloc_zero_array(ctx, uint8_t, kdf_context_size);
 
         calculate_kdf_context(ctx,
-                              &key_envelope->root_key_id,
+                              (uint8_t*)&key_envelope->root_key_id,
                               key_envelope->l0_index,
                               l1,
                               l2,
@@ -324,7 +325,7 @@ compute_l2_key(TALLOC_CTX* ctx,
         uint8_t* kdf_context = talloc_zero_array(ctx, uint8_t, kdf_context_size);
 
         calculate_kdf_context(ctx,
-                              &key_envelope->root_key_id,
+                              (uint8_t*)&key_envelope->root_key_id,
                               key_envelope->l0_index,
                               l1,
                               l2,
@@ -353,10 +354,87 @@ compute_l2_key(TALLOC_CTX* ctx,
     }
 
     *out_l2_key = l2_key;
+
+    return true;
 }
 
 static uint32_t
-get_kek(GroupKeyEnvelope *key_envelope, struct KeyEnvelope *key_identifier, gnutls_datum_t *kek)
+compute_kek(TALLOC_CTX* ctx,
+            const char* hash_algorithm,
+            const char* secret_algorithm,
+            const uint32_t secret_algorithm_len,
+            const uint8_t* secret_parameters,
+            const uint32_t secret_parameters_len,
+            const uint8_t* public_key,
+            const uint32_t public_key_size,
+            const uint8_t* private_key,
+            const uint32_t private_key_size,
+            const uint32_t key_size,
+            uint8_t** out)
+{
+    return false;
+}
+
+static uint32_t
+compute_kek_from_public_key(TALLOC_CTX* ctx,
+                            const char* hash_algorithm,
+                            const uint8_t* seed,
+                            const uint32_t seed_size,
+                            const char* secret_algorithm,
+                            const uint32_t secret_algorithm_len,
+                            const uint8_t* secret_parameters,
+                            const uint32_t secret_parameters_len,
+                            const uint8_t* public_key,
+                            const uint32_t public_key_size,
+                            const uint32_t private_key_size,
+                            const uint32_t key_size,
+                            uint8_t** out)
+{
+    uint8_t* private_key = talloc_zero_array(ctx, uint8_t, private_key_size);
+
+    uint8_t* secret_algorithm_utf16_le = NULL;
+
+    if (!compute_kdf(hash_algorithm,
+                     seed,
+                     seed_size,
+                     KDS_SERVICE_LABEL,
+                     sizeof(KDS_SERVICE_LABEL),
+                     secret_algorithm_utf16_le,
+                     sizeof(secret_algorithm_utf16_le),
+                     private_key_size,
+                     &private_key))
+    {
+        printf("%s:%s:%d Failed to derive private key.\n",
+               __FILE__, __func__, __LINE__);
+        return -1;
+    }
+
+    if (!compute_kek(ctx,
+                     hash_algorithm,
+                     secret_algorithm,
+                     secret_algorithm_len,
+                     secret_parameters,
+                     secret_parameters_len,
+                     public_key,
+                     public_key_size,
+                     private_key,
+                     private_key_size,
+                     key_size,
+                     out))
+    {
+        printf("%s:%s:%d Failed to derive key encryption key.\n",
+               __FILE__, __func__, __LINE__);
+        return -1;
+    }
+
+    return 0;
+}
+
+static uint32_t
+get_kek(TALLOC_CTX* ctx,
+        GroupKeyEnvelope *key_envelope,
+        struct KeyEnvelope *key_identifier,
+        gnutls_datum_t *kek)
 {
     if (key_envelope->flags & 1)
     {
@@ -379,7 +457,7 @@ get_kek(GroupKeyEnvelope *key_envelope, struct KeyEnvelope *key_identifier, gnut
     DATA_BLOB data_blob;
     data_blob.data = key_envelope->kdf_parameters;
     data_blob.length = key_envelope->kdf_parameters_len;
-    ndr_status = ndr_pull_struct_blob(&data_blob, NULL, &kdf_parameters, (ndr_pull_flags_fn_t)ndr_pull_KdfParameters);
+    ndr_status = ndr_pull_struct_blob(&data_blob, ctx, &kdf_parameters, (ndr_pull_flags_fn_t)ndr_pull_KdfParameters);
     if (ndr_status != NDR_ERR_SUCCESS)
     {
         printf("%s:%s:%d Failed to decode KeyEnvelope object. Error = 0x%x (%s)\n",
@@ -389,13 +467,78 @@ get_kek(GroupKeyEnvelope *key_envelope, struct KeyEnvelope *key_identifier, gnut
     }
 
     uint8_t *l2_key = NULL;
+    uint32_t l2_key_size = 64;
 
-    compute_l2_key(NULL,
-                   kdf_parameters.hash_algorithm,
-                   key_identifier->l1_index,
-                   key_identifier->l2_index,
-                   key_envelope,
-                   &l2_key);
+    if (!compute_l2_key(ctx,
+                        kdf_parameters.hash_algorithm,
+                        key_identifier->l1_index,
+                        key_identifier->l2_index,
+                        key_envelope,
+                        &l2_key))
+    {
+        printf("%s:%s:%d Failed to compute l2 key.\n",
+               __FILE__, __func__, __LINE__);
+
+        return -1;
+    }
+
+    const uint32_t key_size = 32;
+    uint8_t* key = talloc_zero_array(ctx, uint8_t, key_size);
+
+    if (!key)
+    {
+        printf("%s:%s:%d Failed to allocate kek memory.\n",
+               __FILE__, __func__, __LINE__);
+
+        return -1;
+    }
+
+    if (key_identifier->flags & 1)
+    {
+        int rc = 0;
+        rc = compute_kek_from_public_key(ctx,
+                                         kdf_parameters.hash_algorithm,
+                                         l2_key,
+                                         l2_key_size,
+                                         key_envelope->secret_agreement_algorithm,
+                                         key_envelope->secret_agreement_algorithm_len,
+                                         key_envelope->secret_agreement_parameters,
+                                         key_envelope->secret_agreement_parameters_len,
+                                         key_identifier->additional_info,
+                                         key_identifier->additional_info_len,
+                                         ceil(key_envelope->private_key_len / 8),
+                                         key_size,
+                                         &key);
+
+        if (rc != 0)
+        {
+            printf("%s:%s:%d Failed to compute kek.\n",
+                   __FILE__, __func__, __LINE__);
+
+            return -1;
+        }
+    }
+    else
+    {
+        if (!compute_kdf(kdf_parameters.hash_algorithm,
+                         l2_key,
+                         l2_key_size,
+                         KDS_SERVICE_LABEL,
+                         sizeof(KDS_SERVICE_LABEL),
+                         key_identifier->additional_info,
+                         key_identifier->additional_info_len,
+                         key_size,
+                         &key))
+        {
+            printf("%s:%s:%d Failed to compute kdf.\n",
+                   __FILE__, __func__, __LINE__);
+
+            return -1;
+        }
+    }
+
+    kek->data = key;
+    kek->size = key_size;
 
     return 0;
 }
@@ -507,7 +650,7 @@ unpack_response(TALLOC_CTX *mem_ctx,
     gnutls_datum_t kek = { 0 };
     int rc = 0;
 
-    rc = get_kek(result, &initial_data->key_identifier, &kek);
+    rc = get_kek(mem_ctx, result, &initial_data->key_identifier, &kek);
     if (rc != 0)
     {
         printf("%s:%s:%d Failed to get key encryption key. Error = 0x%x (%s)\n",
