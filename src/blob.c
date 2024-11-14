@@ -31,12 +31,16 @@
 #include <gnutls/abstract.h>
 
 #include <openssl/evp.h>
+#include <openssl/err.h>
 #include <openssl/core_names.h>
 #include <openssl/kdf.h>
 #include <openssl/params.h>
+#include <openssl/ssl.h>
 
 #include "pkcs7_p.h"
 #include "pkcs7/KEKRecipientInfo.h"
+
+const uint8_t KDS_SERVICE_LABEL[] = { 0x00, 0x00 };
 
 #define CONTENT_TYPE_ENVELOPED_DATA_OID "1.2.840.113549.1.7.3"
 #define MAX_BUFFER_SIZE 16384
@@ -128,61 +132,227 @@ error_exit:
 
 static uint32_t
 compute_kdf(const uint8_t  *algorithm,
-            uint8_t  *secret,
-            uint32_t secret_size,
-            uint8_t  *label,
-            uint32_t label_size,
-            uint8_t *context,
-            uint32_t context_size,
-            uint32_t length,
+            const uint8_t  *secret,
+            const uint32_t secret_size,
+            const uint8_t  *label,
+            const uint32_t label_size,
+            const uint8_t *context,
+            const uint32_t context_size,
+            const uint32_t length,
             uint8_t **out)
 {
     EVP_KDF *kdf;
     EVP_KDF_CTX *kctx;
-    OSSL_PARAM params[8];
+    OSSL_PARAM params[7];
     OSSL_PARAM* p = params;
     int rc = 0;
 
     kdf = EVP_KDF_fetch(NULL, "KBKDF", NULL);
+    if (kdf == NULL)
+    {
+        printf("%s:%s:%d Failed to perform EVP_KDF_fetch kdf is NULL.",
+               __FILE__, __func__, __LINE__);
+        return false;
+    }
+
     kctx = EVP_KDF_CTX_new(kdf);
     EVP_KDF_free(kdf);
 
-    *p++ = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_CIPHER, (char*)algorithm, 0);
+    if (kctx == NULL)
+    {
+        printf("%s:%s:%d Failed to perform EVP_KDF_CTX_new kctx is NULL.",
+               __FILE__, __func__, __LINE__);
+        return false;
+    }
+
+    *p++ = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_DIGEST, (char*)algorithm, 0);
     *p++ = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_MAC, "HMAC", 0);
     *p++ = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_MODE, "COUNTER", 0);
-    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_KEY, secret, secret_size);
-    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_SALT, label, label_size);
-    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_INFO, context, context_size);
-    *p++ = OSSL_PARAM_construct_int(OSSL_KDF_PARAM_KBKDF_USE_SEPARATOR, 0);
+    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_KEY, (char*)secret, secret_size);
+    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_SALT, (char*)label, label_size);
+    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_INFO, (char*)context, context_size);
     *p = OSSL_PARAM_construct_end();
 
-    rc = EVP_KDF_derive(kctx, *out, length, params);
+
+    rc = EVP_KDF_CTX_set_params(kctx, params);
+    if (rc <= 0)
+    {
+        printf("%s:%s:%d Unable to set context parameters. Error = 0x%x\n",
+               __FILE__, __func__, __LINE__, rc);
+        EVP_KDF_CTX_free(kctx);
+
+        return false;
+    }
+
+    rc = EVP_KDF_derive(kctx, *out, length, NULL);
+
     EVP_KDF_CTX_free(kctx);
 
     if (rc <= 0)
     {
-        printf("%s:%s:%d Failed to derive key. Error = 0x%x\n",
-               __FILE__, __func__, __LINE__, rc);
+        SSL_load_error_strings();
+        ERR_load_crypto_strings();
+        printf("%s:%s:%d Failed to derive key. Error = 0x%x %s\n",
+               __FILE__, __func__, __LINE__, rc, ERR_error_string(ERR_get_error(), NULL));
+        ERR_free_strings();
         return false;
     }
 
     return true;
 }
 
+static void
+calculate_kdf_context(TALLOC_CTX* ctx,
+                      uint8_t* uuid,
+                      uint32_t l0,
+                      uint32_t l1,
+                      uint32_t l2,
+                      uint8_t** out)
+{
+    memcpy(*out, uuid, 16);
+
+    uint32_t* l0_ptr = (uint32_t*)(*out + 16);
+    *l0_ptr = htole32(l0);
+
+    uint32_t* l1_ptr = (uint32_t*)(*out + 20);
+    *l1_ptr = htole32(l1);
+
+    uint32_t* l2_ptr = (uint32_t*)(*out + 24);
+    *l2_ptr = htole32(l2);
+}
+
 static uint32_t
-compute_l2_key(const char* hash_algorithm,
+compute_l2_key(TALLOC_CTX* ctx,
+               const char* hash_algorithm,
                uint32_t request_1,
                uint32_t request_2,
-               GroupKeyEnvelope *key_envelope)
+               GroupKeyEnvelope *key_envelope,
+               uint8_t** out_l2_key)
 {
     uint32_t l1 = key_envelope->l1_index;
     uint8_t* l1_key = key_envelope->l1_key;
     uint32_t l2 = key_envelope->l2_index;
     uint8_t* l2_key = key_envelope->l2_key;
 
+    uint32_t rc = 0;
+
     bool reseed_l2 = l2 == 31 || l1 != request_1;
 
+    if (l2 != 31 && l1 != request_1)
+    {
+        l1 -= 1;
+    }
 
+    while (l1 != request_1)
+    {
+        reseed_l2 = true;
+        l1 -= 1;
+
+        uint32_t kdf_context_size = 32;
+        uint8_t* kdf_context = talloc_zero_array(ctx, uint8_t, kdf_context_size);
+
+        calculate_kdf_context(ctx,
+                              &key_envelope->root_key_id,
+                              key_envelope->l0_index,
+                              l1,
+                              -1,
+                              &kdf_context);
+
+        uint32_t new_l1_key_size = 64;
+        uint8_t* new_l1_key = talloc_zero_array(ctx, uint8_t, new_l1_key_size);
+
+        rc = compute_kdf(hash_algorithm,
+                         l1_key,
+                         sizeof(l1_key),
+                         KDS_SERVICE_LABEL,
+                         sizeof(KDS_SERVICE_LABEL),
+                         kdf_context,
+                         kdf_context_size,
+                         new_l1_key_size,
+                         &new_l1_key);
+        if (!rc)
+        {
+            printf("%s:%s:%d Failed to derive l1 key. Error = 0x%x\n",
+                   __FILE__, __func__, __LINE__, rc);
+            return false;
+        }
+
+        l1_key = new_l1_key;
+    }
+
+    if (reseed_l2)
+    {
+        l2 = 31;
+
+        uint32_t kdf_context_size = 32;
+        uint8_t* kdf_context = talloc_zero_array(ctx, uint8_t, kdf_context_size);
+
+        calculate_kdf_context(ctx,
+                              &key_envelope->root_key_id,
+                              key_envelope->l0_index,
+                              l1,
+                              l2,
+                              &kdf_context);
+
+        uint32_t new_l2_key_size = 64;
+        uint8_t* new_l2_key = talloc_zero_array(ctx, uint8_t, new_l2_key_size);
+
+        rc = compute_kdf(hash_algorithm,
+                         l1_key,
+                         sizeof(l1_key),
+                         KDS_SERVICE_LABEL,
+                         sizeof(KDS_SERVICE_LABEL),
+                         kdf_context,
+                         kdf_context_size,
+                         new_l2_key_size,
+                         &new_l2_key);
+        if (!rc)
+        {
+            printf("%s:%s:%d Failed to reseed l2 key. Error = 0x%x\n",
+                   __FILE__, __func__, __LINE__, rc);
+            return false;
+        }
+
+        l2_key = new_l2_key;
+    }
+
+    while (l2 != request_2)
+    {
+        l2 -= 1;
+
+        uint32_t kdf_context_size = 32;
+        uint8_t* kdf_context = talloc_zero_array(ctx, uint8_t, kdf_context_size);
+
+        calculate_kdf_context(ctx,
+                              &key_envelope->root_key_id,
+                              key_envelope->l0_index,
+                              l1,
+                              l2,
+                              &kdf_context);
+
+        uint32_t new_l2_key_size = 64;
+        uint8_t* new_l2_key = talloc_zero_array(ctx, uint8_t, new_l2_key_size);
+
+        rc = compute_kdf(hash_algorithm,
+                         l2_key,
+                         sizeof(l2_key),
+                         KDS_SERVICE_LABEL,
+                         sizeof(KDS_SERVICE_LABEL),
+                         kdf_context,
+                         kdf_context_size,
+                         new_l2_key_size,
+                         &new_l2_key);
+        if (!rc)
+        {
+            printf("%s:%s:%d Failed to derive l2 key. Error = 0x%x\n",
+                   __FILE__, __func__, __LINE__, rc);
+            return false;
+        }
+
+        l2_key = new_l2_key;
+    }
+
+    *out_l2_key = l2_key;
 }
 
 static uint32_t
@@ -219,9 +389,13 @@ get_kek(GroupKeyEnvelope *key_envelope, struct KeyEnvelope *key_identifier, gnut
     }
 
     uint8_t *l2_key = NULL;
-    uint32_t l2_key_size = 0;
-    uint8_t *KDS_SERVICE_LABEL = "";
-    uint32_t KDS_SERVICE_LABEL_SIZE = 0;
+
+    compute_l2_key(NULL,
+                   kdf_parameters.hash_algorithm,
+                   key_identifier->l1_index,
+                   key_identifier->l2_index,
+                   key_envelope,
+                   &l2_key);
 
     return 0;
 }
