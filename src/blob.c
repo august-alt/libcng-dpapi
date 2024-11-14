@@ -20,6 +20,8 @@
 
 #include "blob_p.h"
 
+#include <stdbool.h>
+
 #include <gkdi/ndr_gkdi.h>
 #include <string.h>
 
@@ -27,6 +29,11 @@
 #include <gnutls/x509.h>
 #include <gnutls/crypto.h>
 #include <gnutls/abstract.h>
+
+#include <openssl/evp.h>
+#include <openssl/core_names.h>
+#include <openssl/kdf.h>
+#include <openssl/params.h>
 
 #include "pkcs7_p.h"
 #include "pkcs7/KEKRecipientInfo.h"
@@ -67,6 +74,8 @@ blob_unpack(
         goto error_exit;
     }
 
+    // TODO: Check encrypted content according to blob.py#L310
+
     DATA_BLOB data_blob;
     data_blob.data = kekInfo->kekid.keyIdentifier.buf;
     data_blob.length = kekInfo->kekid.keyIdentifier.size;
@@ -79,17 +88,8 @@ blob_unpack(
         goto error_exit;
     }
 
-    char target_sd[] =
-    {
-        0x01, 0x00, 0x04, 0x80, 0x54, 0x00, 0x00, 0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x02, 0x00, 0x40, 0x00, 0x02, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x24, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x05, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x05, 0x15, 0x00, 0x00, 0x00, 0x08, 0x70, 0x66, 0x99, 0x73, 0xf4, 0xc7, 0xf5,
-        0x08, 0x6e, 0x25, 0x31, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x14, 0x00, 0x02, 0x00,
-        0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
-        0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x12, 0x00, 0x00, 0x00, 0x01, 0x01,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x12, 0x00, 0x00, 0x00
-    };
+    const char target_sd[] = { 0x01, 0x00, 0x04, 0x80, 0x54, 0x00, 0x00, 0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x02, 0x00, 0x40, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x24, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x15, 0x00, 0x00, 0x00, 0x08, 0x70, 0x66, 0x99, 0x73, 0xf4, 0xc7, 0xf5, 0x08, 0x6e, 0x25, 0x31, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x14, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x12, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x12, 0x00, 0x00, 0x00 };
+
     uint32_t target_sd_size = sizeof(target_sd);
 
     result->protection_descriptor.target_sd = talloc_memdup(mem_ctx, target_sd, target_sd_size);
@@ -126,7 +126,7 @@ error_exit:
     return NULL;
 }
 
-uint32_t
+static uint32_t
 compute_kdf(const uint8_t  *algorithm,
             uint8_t  *secret,
             uint32_t secret_size,
@@ -137,7 +137,52 @@ compute_kdf(const uint8_t  *algorithm,
             uint32_t length,
             uint8_t **out)
 {
-    return -1;
+    EVP_KDF *kdf;
+    EVP_KDF_CTX *kctx;
+    OSSL_PARAM params[8];
+    OSSL_PARAM* p = params;
+    int rc = 0;
+
+    kdf = EVP_KDF_fetch(NULL, "KBKDF", NULL);
+    kctx = EVP_KDF_CTX_new(kdf);
+    EVP_KDF_free(kdf);
+
+    *p++ = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_CIPHER, (char*)algorithm, 0);
+    *p++ = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_MAC, "HMAC", 0);
+    *p++ = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_MODE, "COUNTER", 0);
+    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_KEY, secret, secret_size);
+    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_SALT, label, label_size);
+    *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_INFO, context, context_size);
+    *p++ = OSSL_PARAM_construct_int(OSSL_KDF_PARAM_KBKDF_USE_SEPARATOR, 0);
+    *p = OSSL_PARAM_construct_end();
+
+    rc = EVP_KDF_derive(kctx, *out, length, params);
+    EVP_KDF_CTX_free(kctx);
+
+    if (rc <= 0)
+    {
+        printf("%s:%s:%d Failed to derive key. Error = 0x%x\n",
+               __FILE__, __func__, __LINE__, rc);
+        return false;
+    }
+
+    return true;
+}
+
+static uint32_t
+compute_l2_key(const char* hash_algorithm,
+               uint32_t request_1,
+               uint32_t request_2,
+               GroupKeyEnvelope *key_envelope)
+{
+    uint32_t l1 = key_envelope->l1_index;
+    uint8_t* l1_key = key_envelope->l1_key;
+    uint32_t l2 = key_envelope->l2_index;
+    uint8_t* l2_key = key_envelope->l2_key;
+
+    bool reseed_l2 = l2 == 31 || l1 != request_1;
+
+
 }
 
 static uint32_t
@@ -177,36 +222,6 @@ get_kek(GroupKeyEnvelope *key_envelope, struct KeyEnvelope *key_identifier, gnut
     uint32_t l2_key_size = 0;
     uint8_t *KDS_SERVICE_LABEL = "";
     uint32_t KDS_SERVICE_LABEL_SIZE = 0;
-
-    if (false)
-    {
-        printf("%s:%s:%d Failed to compute_kek_from_public_key. Error = 0x%x (%s)\n",
-               __FILE__, __func__, __LINE__, ndr_status, ndr_errstr(ndr_status));
-
-        return -1;
-    }
-    else
-    {
-
-        uint32_t status = 0;
-        kek->size = 32;
-        status = compute_kdf(kdf_parameters.hash_algorithm,
-                             l2_key,
-                             l2_key_size,
-                             KDS_SERVICE_LABEL,
-                             KDS_SERVICE_LABEL_SIZE,
-                             key_identifier->additional_info,
-                             key_identifier->additional_info_len,
-                             kek->size,
-                             &kek->data);
-        if (status != 0)
-        {
-            printf("%s:%s:%d Failed to compute_kdf. Error = 0x%x (%s)\n",
-                   __FILE__, __func__, __LINE__, status, "Failed to compute kdf!");
-
-            return -1;
-        }
-    }
 
     return 0;
 }
