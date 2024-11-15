@@ -42,8 +42,10 @@
 #include "pkcs7_p.h"
 #include "pkcs7/KEKRecipientInfo.h"
 
-const uint8_t KDS_SERVICE_LABEL[] = { 0x00, 0x00 };
-const uint8_t KDS_PUBLIC_KEY_LABEL[] = { 0x00, 0x00 };
+const uint8_t KDS_SERVICE_LABEL[] = { 0x00, 0x4b, 0x00, 0x44, 0x00, 0x53, 0x00, 0x20, 0x00, 0x73, 0x00, 0x65, 0x00, 0x72, 0x00, 0x76, 0x00, 0x69, 0x00, 0x63, 0x00, 0x65, 0x00, 0x00 };
+const uint8_t KDS_PUBLIC_KEY_LABEL[] = { 0x00, 0x4b, 0x00, 0x44, 0x00, 0x53, 0x00, 0x20, 0x00, 0x70, 0x00, 0x75, 0x00, 0x62, 0x00, 0x6c, 0x00, 0x69, 0x00, 0x63, 0x00, 0x20, 0x00, 0x6b, 0x00, 0x65, 0x00, 0x79, 0x00, 0x00 };
+
+const uint8_t SHA512_UTF_16_LE[] = { 0x00, 0x53, 0x00, 0x48, 0x00, 0x41, 0x00, 0x35, 0x00, 0x31, 0x00, 0x32, 0x00, 0x00 };
 
 #define CONTENT_TYPE_ENVELOPED_DATA_OID "1.2.840.113549.1.7.3"
 #define MAX_BUFFER_SIZE 16384
@@ -361,6 +363,113 @@ compute_l2_key(TALLOC_CTX* ctx,
 }
 
 static uint32_t
+compute_secret_key(TALLOC_CTX* ctx,
+                   const uint8_t* hash_algorithm,
+                   const uint8_t* key_mateial,
+                   const uint32_t key_mateial_size,
+                   const uint8_t* other_info,
+                   const uint32_t other_info_size,
+                   const uint32_t length,
+                   uint8_t** out)
+{
+    uint8_t* result = talloc_zero_array(ctx, uint8_t, length);
+    if (!result)
+    {
+        printf("%s:%s:%d Unable to allocate output buffer.\n",
+               __FILE__, __func__, __LINE__);
+
+        return false;
+    }
+
+    EVP_MD_CTX* mdctx;
+    const EVP_MD* md;
+
+    uint8_t md_value[EVP_MAX_MD_SIZE];
+    uint32_t md_size = 0;
+
+    md = EVP_get_digestbyname(hash_algorithm);
+    if (md == NULL)
+    {
+        printf("%s:%s:%d Unsupported hash algorithm %s.\n",
+               __FILE__, __func__, __LINE__, hash_algorithm);
+
+        return false;
+    }
+
+    mdctx = EVP_MD_CTX_new();
+    if (mdctx == NULL)
+    {
+        printf("%s:%s:%d EVP_MD_CTX_new failed!\n",
+               __FILE__, __func__, __LINE__);
+
+        return false;
+    }
+
+    uint32_t out_length = 0;
+    uint32_t counter = 1;
+
+    while (out_length < length)
+    {
+        uint32_t counter_be = htobe32(counter);
+
+        if (!EVP_DigestInit_ex2(mdctx, md, NULL))
+        {
+            printf("%s:%s:%d EVP_DigestInit_ex2 failed!\n",
+                   __FILE__, __func__, __LINE__);
+            goto error_exit;
+        }
+
+        if (!EVP_DigestUpdate(mdctx, &counter_be, 4))
+        {
+            printf("%s:%s:%d EVP_DigestUpdate failed!\n",
+                   __FILE__, __func__, __LINE__);
+            goto error_exit;
+        }
+
+        if (!EVP_DigestUpdate(mdctx, key_mateial, key_mateial_size))
+        {
+            printf("%s:%s:%d EVP_DigestUpdate failed!\n",
+                   __FILE__, __func__, __LINE__);
+            goto error_exit;
+        }
+
+        if (!EVP_DigestUpdate(mdctx, other_info, other_info_size))
+        {
+            printf("%s:%s:%d EVP_DigestUpdate failed!\n",
+                   __FILE__, __func__, __LINE__);
+            goto error_exit;
+        }
+
+        if (!EVP_DigestFinal_ex(mdctx, md_value, &md_size))
+        {
+            printf("%s:%s:%d EVP_DigestFinal_ex failed!\n",
+                   __FILE__, __func__, __LINE__);
+            goto error_exit;
+
+        }
+
+        if (out_length + md_size < length)
+        {
+            memcpy(result + out_length, md_value, md_size);
+        }
+
+        out_length += md_size;
+        counter++;
+    }
+
+    EVP_MD_CTX_free(mdctx);
+
+    *out = result;
+
+    return true;
+
+error_exit:
+    EVP_MD_CTX_free(mdctx);
+
+    return false;
+}
+
+static uint32_t
 compute_kek(TALLOC_CTX* ctx,
             const char* hash_algorithm,
             const char* secret_algorithm,
@@ -426,7 +535,29 @@ compute_kek(TALLOC_CTX* ctx,
     }
 
     uint8_t* secret = NULL;
-    uint32_t secret_length = 0;
+    const uint32_t secret_length = 32;
+
+    size_t other_info_length = sizeof(KDS_SERVICE_LABEL) + sizeof(KDS_PUBLIC_KEY_LABEL) + sizeof(SHA512_UTF_16_LE);
+    uint8_t* other_info = talloc_zero_array(ctx, uint8_t, other_info_length);
+
+    memcpy(other_info, SHA512_UTF_16_LE, sizeof(SHA512_UTF_16_LE));
+    memcpy(other_info + sizeof(SHA512_UTF_16_LE), KDS_PUBLIC_KEY_LABEL, sizeof(KDS_PUBLIC_KEY_LABEL));
+    memcpy(other_info + sizeof(SHA512_UTF_16_LE) + sizeof(KDS_PUBLIC_KEY_LABEL), KDS_SERVICE_LABEL, sizeof(KDS_SERVICE_LABEL));
+
+    if (!compute_secret_key(ctx,
+                            secret_hash_algorithm,
+                            shared_secret,
+                            sizeof(uint32_t),
+                            other_info,
+                            other_info_length,
+                            secret_length,
+                            &secret))
+    {
+        printf("%s:%s:%d Unable to compute secret key.\n",
+               __FILE__, __func__, __LINE__);
+
+        return false;
+    }
 
     if (!compute_kdf(hash_algorithm,
                      secret,
@@ -444,7 +575,7 @@ compute_kek(TALLOC_CTX* ctx,
         return false;
     }
 
-    return false;
+    return true;
 }
 
 static uint32_t
