@@ -369,18 +369,9 @@ compute_secret_key(TALLOC_CTX* ctx,
                    const uint32_t key_mateial_size,
                    const uint8_t* other_info,
                    const uint32_t other_info_size,
-                   const uint32_t length,
+                   uint32_t* out_size,
                    uint8_t** out)
 {
-    uint8_t* result = talloc_zero_array(ctx, uint8_t, length);
-    if (!result)
-    {
-        printf("%s:%s:%d Unable to allocate output buffer.\n",
-               __FILE__, __func__, __LINE__);
-
-        return false;
-    }
-
     EVP_MD_CTX* mdctx;
     const EVP_MD* md;
 
@@ -392,6 +383,17 @@ compute_secret_key(TALLOC_CTX* ctx,
     {
         printf("%s:%s:%d Unsupported hash algorithm %s.\n",
                __FILE__, __func__, __LINE__, hash_algorithm);
+
+        return false;
+    }
+
+    uint32_t length = EVP_MD_size(md);
+
+    uint8_t* result = talloc_zero_array(ctx, uint8_t, length);
+    if (!result)
+    {
+        printf("%s:%s:%d Unable to allocate output buffer.\n",
+               __FILE__, __func__, __LINE__);
 
         return false;
     }
@@ -459,6 +461,7 @@ compute_secret_key(TALLOC_CTX* ctx,
 
     EVP_MD_CTX_free(mdctx);
 
+    *out_size = length;
     *out = result;
 
     return true;
@@ -535,7 +538,7 @@ compute_kek(TALLOC_CTX* ctx,
     }
 
     uint8_t* secret = NULL;
-    const uint32_t secret_length = 32;
+    uint32_t secret_length = 0;
 
     size_t other_info_length = sizeof(KDS_SERVICE_LABEL) + sizeof(KDS_PUBLIC_KEY_LABEL) + sizeof(SHA512_UTF_16_LE);
     uint8_t* other_info = talloc_zero_array(ctx, uint8_t, other_info_length);
@@ -550,7 +553,7 @@ compute_kek(TALLOC_CTX* ctx,
                             sizeof(uint32_t),
                             other_info,
                             other_info_length,
-                            secret_length,
+                            &secret_length,
                             &secret))
     {
         printf("%s:%s:%d Unable to compute secret key.\n",
