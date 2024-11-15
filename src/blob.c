@@ -23,6 +23,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <string.h>
+#include <strings.h>
 
 #include <gkdi/ndr_gkdi.h>
 
@@ -42,6 +43,7 @@
 #include "pkcs7/KEKRecipientInfo.h"
 
 const uint8_t KDS_SERVICE_LABEL[] = { 0x00, 0x00 };
+const uint8_t KDS_PUBLIC_KEY_LABEL[] = { 0x00, 0x00 };
 
 #define CONTENT_TYPE_ENVELOPED_DATA_OID "1.2.840.113549.1.7.3"
 #define MAX_BUFFER_SIZE 16384
@@ -372,6 +374,76 @@ compute_kek(TALLOC_CTX* ctx,
             const uint32_t key_size,
             uint8_t** out)
 {
+    enum ndr_err_code ndr_status = NDR_ERR_SUCCESS;
+    char* secret_hash_algorithm = "";
+    uint8_t* shared_secret = NULL;
+
+    if (strncasecmp(secret_algorithm, "DH", 2) == 0)
+    {
+        printf("%s:%s:%d Standard diffie hellman located.\n",
+               __FILE__, __func__, __LINE__);
+
+        struct FfcDhKey dh_parameters;
+
+        DATA_BLOB data_blob;
+        data_blob.data = (uint8_t*)public_key;
+        data_blob.length = public_key_size;
+        ndr_status = ndr_pull_struct_blob(&data_blob, ctx, &dh_parameters, (ndr_pull_flags_fn_t)ndr_pull_FfcDhKey);
+
+        if (ndr_status != NDR_ERR_SUCCESS)
+        {
+            printf("%s:%s:%d Failed to decode FfcDhKey object. Error = 0x%x (%s)\n",
+                   __FILE__, __func__, __LINE__, ndr_status, ndr_errstr(ndr_status));
+
+            return false;
+        }
+
+        uint32_t secret_shared_int = (uint32_t)pow(*((uint32_t*)dh_parameters.public_key), htobe32(*((uint32_t*)private_key))) % (*(uint32_t*)dh_parameters.field_order);
+        shared_secret = (uint8_t*)talloc_zero(ctx, uint32_t);
+        if (!shared_secret)
+        {
+            printf("%s:%s:%d Unable to allocate DH shared secret. Error = 0x%x (%s)\n",
+                   __FILE__, __func__, __LINE__, ndr_status, ndr_errstr(ndr_status));
+
+            return false;
+        }
+        uint32_t* shared_secret_ptr = (uint32_t*)shared_secret;
+        *shared_secret_ptr = htobe32(secret_shared_int);
+        secret_hash_algorithm = "SHA256";
+    }
+    else if (strncasecmp(secret_algorithm, "ECDH_P", 6) == 0)
+    {
+        printf("%s:%s:%d Elliptic curve diffie hellman located.\n",
+               __FILE__, __func__, __LINE__);
+        // TODO: Implement ECDH_P.
+    }
+    else
+    {
+        printf("%s:%s:%d Unsupported type of encryption: %s.\n",
+               __FILE__, __func__, __LINE__, secret_algorithm);
+
+        return false;
+    }
+
+    uint8_t* secret = NULL;
+    uint32_t secret_length = 0;
+
+    if (!compute_kdf(hash_algorithm,
+                     secret,
+                     secret_length,
+                     KDS_SERVICE_LABEL,
+                     sizeof(KDS_SERVICE_LABEL),
+                     KDS_PUBLIC_KEY_LABEL,
+                     sizeof(KDS_PUBLIC_KEY_LABEL),
+                     key_size,
+                     out))
+    {
+        printf("%s:%s:%d Unable to derive KEK.\n",
+               __FILE__, __func__, __LINE__);
+
+        return false;
+    }
+
     return false;
 }
 
