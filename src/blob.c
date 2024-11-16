@@ -42,10 +42,10 @@
 #include "pkcs7_p.h"
 #include "pkcs7/KEKRecipientInfo.h"
 
-const uint8_t KDS_SERVICE_LABEL[] = { 0x00, 0x4b, 0x00, 0x44, 0x00, 0x53, 0x00, 0x20, 0x00, 0x73, 0x00, 0x65, 0x00, 0x72, 0x00, 0x76, 0x00, 0x69, 0x00, 0x63, 0x00, 0x65, 0x00, 0x00 };
-const uint8_t KDS_PUBLIC_KEY_LABEL[] = { 0x00, 0x4b, 0x00, 0x44, 0x00, 0x53, 0x00, 0x20, 0x00, 0x70, 0x00, 0x75, 0x00, 0x62, 0x00, 0x6c, 0x00, 0x69, 0x00, 0x63, 0x00, 0x20, 0x00, 0x6b, 0x00, 0x65, 0x00, 0x79, 0x00, 0x00 };
+const uint8_t KDS_SERVICE_LABEL[] = { 0x00, 0x4b, 0x00, 0x44, 0x00, 0x53, 0x00, 0x20, 0x00, 0x73, 0x00, 0x65, 0x00, 0x72, 0x00, 0x76, 0x00, 0x69, 0x00, 0x63, 0x00, 0x65, 0x00, 0x00, 0x00 };
+const uint8_t KDS_PUBLIC_KEY_LABEL[] = { 0x00, 0x4b, 0x00, 0x44, 0x00, 0x53, 0x00, 0x20, 0x00, 0x70, 0x00, 0x75, 0x00, 0x62, 0x00, 0x6c, 0x00, 0x69, 0x00, 0x63, 0x00, 0x20, 0x00, 0x6b, 0x00, 0x65, 0x00, 0x79, 0x00, 0x00, 0x00 };
 
-const uint8_t SHA512_UTF_16_LE[] = { 0x00, 0x53, 0x00, 0x48, 0x00, 0x41, 0x00, 0x35, 0x00, 0x31, 0x00, 0x32, 0x00, 0x00 };
+const uint8_t SHA512_UTF_16_LE[] = { 0x00, 0x53, 0x00, 0x48, 0x00, 0x41, 0x00, 0x35, 0x00, 0x31, 0x00, 0x32, 0x00, 0x00, 0x00 };
 
 #define CONTENT_TYPE_ENVELOPED_DATA_OID "1.2.840.113549.1.7.3"
 #define MAX_BUFFER_SIZE 16384
@@ -178,7 +178,6 @@ compute_kdf(const uint8_t  *algorithm,
     *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_INFO, (char*)context, context_size);
     *p = OSSL_PARAM_construct_end();
 
-
     rc = EVP_KDF_CTX_set_params(kctx, params);
     if (rc <= 0)
     {
@@ -253,7 +252,7 @@ compute_l2_key(TALLOC_CTX* ctx,
         reseed_l2 = true;
         l1 -= 1;
 
-        uint32_t kdf_context_size = 32;
+        uint32_t kdf_context_size = 28;
         uint8_t* kdf_context = talloc_zero_array(ctx, uint8_t, kdf_context_size);
 
         calculate_kdf_context(ctx,
@@ -268,7 +267,7 @@ compute_l2_key(TALLOC_CTX* ctx,
 
         rc = compute_kdf(hash_algorithm,
                          l1_key,
-                         sizeof(l1_key),
+                         key_envelope->l1_key_len,
                          KDS_SERVICE_LABEL,
                          sizeof(KDS_SERVICE_LABEL),
                          kdf_context,
@@ -289,7 +288,7 @@ compute_l2_key(TALLOC_CTX* ctx,
     {
         l2 = 31;
 
-        uint32_t kdf_context_size = 32;
+        uint32_t kdf_context_size = 28;
         uint8_t* kdf_context = talloc_zero_array(ctx, uint8_t, kdf_context_size);
 
         calculate_kdf_context(ctx,
@@ -304,7 +303,7 @@ compute_l2_key(TALLOC_CTX* ctx,
 
         rc = compute_kdf(hash_algorithm,
                          l1_key,
-                         sizeof(l1_key),
+                         key_envelope->l1_key_len,
                          KDS_SERVICE_LABEL,
                          sizeof(KDS_SERVICE_LABEL),
                          kdf_context,
@@ -325,7 +324,7 @@ compute_l2_key(TALLOC_CTX* ctx,
     {
         l2 -= 1;
 
-        uint32_t kdf_context_size = 32;
+        uint32_t kdf_context_size = 28;
         uint8_t* kdf_context = talloc_zero_array(ctx, uint8_t, kdf_context_size);
 
         calculate_kdf_context(ctx,
@@ -340,7 +339,7 @@ compute_l2_key(TALLOC_CTX* ctx,
 
         rc = compute_kdf(hash_algorithm,
                          l2_key,
-                         sizeof(l2_key),
+                         key_envelope->l2_key_len,
                          KDS_SERVICE_LABEL,
                          sizeof(KDS_SERVICE_LABEL),
                          kdf_context,
