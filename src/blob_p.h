@@ -53,6 +53,7 @@ typedef struct blob
     uint8_t* enc_content;
     uint32_t enc_content_size;
     char* enc_content_algorithm;
+    uint32_t enc_content_algorithm_size;
     uint8_t* enc_content_parameters;
     uint32_t enc_content_parameters_size;
 } blob_t;
