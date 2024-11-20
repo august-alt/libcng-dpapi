@@ -28,7 +28,7 @@
 
 #define MAX_ERROR_STRING_LENGTH 1024
 
-KEKRecipientInfo_t *unpack_ContentInfo(
+EnvelopedData_t *unpack_ContentInfo(
         const uint8_t* data,
         const uint32_t size
         )
@@ -43,6 +43,8 @@ KEKRecipientInfo_t *unpack_ContentInfo(
         printf("%s:%s:%d Failed to decode ContentInfo object. Error = 0x%x (%s)\n",
                __FILE__, __func__, __LINE__, rval.code, "");
     }
+
+    uint32_t consumed_first = rval.consumed;
 
     rval = ber_decode(0, &asn_DEF_EnvelopedData, (void**)&envelopedData,
                       contentInfo->content.buf, contentInfo->content.size);
@@ -62,8 +64,12 @@ KEKRecipientInfo_t *unpack_ContentInfo(
         return NULL;
     }
 
-    KEKRecipientInfo_t *kek = malloc(sizeof(KEKRecipientInfo_t));
-    *kek = envelopedData->recipientInfos.list.array[0]->choice.kekri;
+    if (!envelopedData->encryptedContentInfo.encryptedContent)
+    {
+        envelopedData->encryptedContentInfo.encryptedContent = malloc(sizeof(EncryptedContent_t));
+        envelopedData->encryptedContentInfo.encryptedContent->buf = (uint8_t*)(data + consumed_first);
+        envelopedData->encryptedContentInfo.encryptedContent->size = (uint32_t)(size - consumed_first);
+    }
 
-    return kek;
+    return envelopedData;
 }

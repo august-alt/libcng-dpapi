@@ -23,9 +23,9 @@
 
 #include <stdint.h>
 
-typedef struct KEKRecipientInfo KEKRecipientInfo_t;
+typedef struct EnvelopedData EnvelopedData_t;
 
-KEKRecipientInfo_t *unpack_ContentInfo(
+EnvelopedData_t *unpack_ContentInfo(
         const uint8_t* data,
         const uint32_t size
         );

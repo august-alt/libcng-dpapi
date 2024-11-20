@@ -41,6 +41,7 @@
 
 #include "pkcs7_p.h"
 #include "pkcs7/KEKRecipientInfo.h"
+#include "pkcs7/EnvelopedData.h"
 
 const uint8_t KDS_SERVICE_LABEL[] = { 0x00, 0x4b, 0x00, 0x44, 0x00, 0x53, 0x00, 0x20, 0x00, 0x73, 0x00, 0x65, 0x00, 0x72, 0x00, 0x76, 0x00, 0x69, 0x00, 0x63, 0x00, 0x65, 0x00, 0x00, 0x00 };
 const uint8_t KDS_PUBLIC_KEY_LABEL[] = { 0x00, 0x4b, 0x00, 0x44, 0x00, 0x53, 0x00, 0x20, 0x00, 0x70, 0x00, 0x75, 0x00, 0x62, 0x00, 0x6c, 0x00, 0x69, 0x00, 0x63, 0x00, 0x20, 0x00, 0x6b, 0x00, 0x65, 0x00, 0x79, 0x00, 0x00, 0x00 };
@@ -74,7 +75,9 @@ blob_unpack(
         goto error_exit;
     }
 
-    KEKRecipientInfo_t *kekInfo = unpack_ContentInfo(data, size);
+    EnvelopedData_t *envelopedData = unpack_ContentInfo(data, size);
+    KEKRecipientInfo_t *kekInfo = malloc(sizeof(KEKRecipientInfo_t));
+    *kekInfo = envelopedData->recipientInfos.list.array[0]->choice.kekri;
     if (!kekInfo)
     {
         printf("%s:%s:%d Failed to decode KEKRecipientInfo object. Error = 0x%x (%s)\n",
@@ -114,10 +117,12 @@ blob_unpack(
             : NULL;
 
 
-    result->enc_content = NULL; // TODO: Implement Enveloped data.
-    result->enc_content_algorithm = NULL; // TODO: Implement Enveloped data.
-    result->enc_content_parameters = NULL; // TODO: Implement Enveloped data.
-    result->enc_content_parameters = 0;
+    result->enc_content = envelopedData->encryptedContentInfo.encryptedContent->buf;
+    result->enc_content_size = envelopedData->encryptedContentInfo.encryptedContent->size;
+    result->enc_content_algorithm = envelopedData->encryptedContentInfo.contentEncryptionAlgorithm.algorithm.buf;
+    result->enc_content_algorithm_size = envelopedData->encryptedContentInfo.contentEncryptionAlgorithm.algorithm.size;
+    result->enc_content_parameters = envelopedData->encryptedContentInfo.contentEncryptionAlgorithm.parameters->buf;
+    result->enc_content_parameters_size = envelopedData->encryptedContentInfo.contentEncryptionAlgorithm.parameters->size;
 
     return result;
 
