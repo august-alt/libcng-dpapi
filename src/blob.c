@@ -266,7 +266,7 @@ compute_l2_key(TALLOC_CTX* ctx,
                               -1,
                               &kdf_context);
 
-        uint32_t new_l1_key_size = 64;
+        uint32_t new_l1_key_size = key_envelope->l1_key_len;
         uint8_t* new_l1_key = talloc_zero_array(ctx, uint8_t, new_l1_key_size);
 
         rc = compute_kdf(hash_algorithm,
