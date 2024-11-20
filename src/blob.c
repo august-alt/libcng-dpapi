@@ -153,7 +153,7 @@ compute_kdf(const uint8_t  *algorithm,
 {
     EVP_KDF *kdf;
     EVP_KDF_CTX *kctx;
-    OSSL_PARAM params[7];
+    OSSL_PARAM params[6];
     OSSL_PARAM* p = params;
     int rc = 0;
 
@@ -177,7 +177,6 @@ compute_kdf(const uint8_t  *algorithm,
 
     *p++ = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_DIGEST, (char*)algorithm, 0);
     *p++ = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_MAC, "HMAC", 0);
-    *p++ = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_MODE, "COUNTER", 0);
     *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_KEY, (char*)secret, secret_size);
     *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_SALT, (char*)label, label_size);
     *p++ = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_INFO, (char*)context, context_size);
