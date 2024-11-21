@@ -753,74 +753,170 @@ get_kek(TALLOC_CTX* ctx,
 }
 
 static uint32_t
-cek_decrypt(gnutls_datum_t *kek,
-            gnutls_datum_t *value,
-            gnutls_datum_t *result)
+cek_decrypt(TALLOC_CTX* mem_ctx,
+            uint8_t* kek,
+            uint32_t kek_size,
+            uint8_t* value,
+            uint32_t value_size,
+            uint32_t* result_size,
+            uint8_t** result)
 {
-    gnutls_cipher_hd_t cipher_handle = { 0 };
-    gnutls_cipher_algorithm_t cipher_algo = GNUTLS_CIPHER_AES_256_CBC; // TODO: Implement algorithm selection.
+    EVP_CIPHER_CTX* ctx = NULL;
+    int length = 0;
     int rc = 0;
 
-    rc = gnutls_cipher_init(&cipher_handle,
-                            cipher_algo,
-                            kek,
-                            NULL);
-    if (rc < 0)
+    ctx = EVP_CIPHER_CTX_new();
+    if (!ctx)
     {
-        printf("%s:%s:%d Failed gnutls_cipher_init: Error = 0x%x (%s)\n",
-            __FILE__, __func__, __LINE__, rc, gnutls_strerror(rc));
+        printf("%s:%s:%d EVP_CIPHER_CTX_new failed!\n",
+            __FILE__, __func__, __LINE__);
         return -1;
     }
 
-    rc = gnutls_cipher_decrypt2(cipher_handle,
-                                value->data,
-                                value->size,
-                                result->data,
-                                result->size);
-    gnutls_cipher_deinit(cipher_handle);
-    if (rc < 0)
+    EVP_CIPHER* cipher = EVP_CIPHER_fetch(NULL, "AES-256-WRAP", NULL);
+    if (!cipher)
     {
-        printf("%s:%s:%d Failed gnutls_cipher_decrypt2: Error = 0x%x (%s)\n",
-            __FILE__, __func__, __LINE__, rc, gnutls_strerror(rc));
+        printf("%s:%s:%d EVP_aes_256_wrap failed!\n",
+            __FILE__, __func__, __LINE__);
         return -1;
     }
+
+    uint8_t* block = talloc_zero_array(mem_ctx, uint8_t, value_size);
+    if (!result)
+    {
+        printf("%s:%s:%d Unable to allocate output buffer.\n",
+               __FILE__, __func__, __LINE__);
+
+        return false;
+    }
+
+    rc = EVP_DecryptInit_ex2(ctx, cipher, kek, NULL, NULL);
+    if (!rc)
+    {
+        EVP_CIPHER_free(cipher);
+        EVP_CIPHER_CTX_free(ctx);
+
+        printf("%s:%s:%d EVP_DecryptInit_ex2 failed!\n",
+            __FILE__, __func__, __LINE__);
+        return -1;
+    }
+
+    rc = EVP_DecryptUpdate(ctx, block, &length, value, value_size);
+    if (!rc)
+    {
+        EVP_CIPHER_free(cipher);
+        EVP_CIPHER_CTX_free(ctx);
+
+        printf("%s:%s:%d EVP_DecryptUpdate failed!\n",
+            __FILE__, __func__, __LINE__);
+        return -1;
+    }
+    *result_size = length;
+
+    rc = EVP_DecryptFinal_ex(ctx, block + length, &length);
+    if (!rc)
+    {
+        EVP_CIPHER_free(cipher);
+        EVP_CIPHER_CTX_free(ctx);
+
+        printf("%s:%s:%d EVP_DecryptFinal failed!\n",
+            __FILE__, __func__, __LINE__);
+        return -1;
+    }
+    *result = block;
+    result_size += length;
 
     return 0;
 }
 
 static uint32_t
-content_decrypt(gnutls_datum_t *cek,
-                gnutls_datum_t *iv,
-                gnutls_datum_t *value,
-                gnutls_datum_t *result)
+content_decrypt(TALLOC_CTX* mem_ctx,
+                uint8_t* cek,
+                uint32_t cek_size,
+                uint8_t* iv,
+                uint32_t iv_size,
+                uint8_t* value,
+                uint32_t value_size,
+                uint32_t* result_size,
+                uint8_t **result)
 {
-    gnutls_cipher_hd_t cipher_handle = { 0 };
-    gnutls_cipher_algorithm_t cipher_algo = GNUTLS_CIPHER_AES_256_GCM; // TODO: Implement algorithm selection.
+    EVP_CIPHER_CTX* ctx = NULL;
+    int length = 0;
     int rc = 0;
-
-    rc = gnutls_cipher_init(&cipher_handle,
-                            cipher_algo,
-                            cek,
-                            iv);
-    if (rc < 0)
+    OSSL_PARAM params[3] =
     {
-        printf("%s:%s:%d Failed gnutls_cipher_init: Error = 0x%x (%s)\n",
-            __FILE__, __func__, __LINE__, rc, gnutls_strerror(rc));
+        OSSL_PARAM_END, OSSL_PARAM_END, OSSL_PARAM_END
+    };
+
+    ctx = EVP_CIPHER_CTX_new();
+    if (!ctx)
+    {
+        printf("%s:%s:%d EVP_CIPHER_CTX_new failed!\n",
+            __FILE__, __func__, __LINE__);
         return -1;
     }
 
-    rc = gnutls_cipher_decrypt2(cipher_handle,
-                                value->data,
-                                value->size,
-                                result->data,
-                                result->size);
-    gnutls_cipher_deinit(cipher_handle);
-    if (rc < 0)
+    EVP_CIPHER* cipher = EVP_CIPHER_fetch(NULL, "AES-256-GCM", NULL);
+    if (!cipher)
     {
-        printf("%s:%s:%d Failed gnutls_cipher_decrypt2: Error = 0x%x (%s)\n",
-            __FILE__, __func__, __LINE__, rc, gnutls_strerror(rc));
+        printf("%s:%s:%d EVP_aes_256_wrap failed!\n",
+            __FILE__, __func__, __LINE__);
         return -1;
     }
+
+    const uint32_t tagLength = 16;
+
+    uint8_t* block = talloc_zero_array(mem_ctx, uint8_t, value_size - tagLength);
+    if (!result)
+    {
+        printf("%s:%s:%d Unable to allocate output buffer.\n",
+               __FILE__, __func__, __LINE__);
+
+        return false;
+    }
+
+    uint8_t tag[tagLength];
+    size_t iv_len = iv_size;
+    memcpy(tag, value + value_size - tagLength, tagLength);
+    params[0] = OSSL_PARAM_construct_size_t(OSSL_CIPHER_PARAM_AEAD_IVLEN, &iv_len);
+    params[1] = OSSL_PARAM_construct_octet_string(OSSL_CIPHER_PARAM_AEAD_TAG, tag, tagLength);
+
+    rc = EVP_DecryptInit_ex2(ctx, cipher, cek, iv, params);
+    if (!rc)
+    {
+        EVP_CIPHER_free(cipher);
+        EVP_CIPHER_CTX_free(ctx);
+
+        printf("%s:%s:%d EVP_DecryptInit_ex2 failed!\n",
+            __FILE__, __func__, __LINE__);
+        return -1;
+    }
+
+    rc = EVP_DecryptUpdate(ctx, block, &length, value, value_size - tagLength);
+    if (!rc)
+    {
+        EVP_CIPHER_free(cipher);
+        EVP_CIPHER_CTX_free(ctx);
+
+        printf("%s:%s:%d EVP_DecryptUpdate failed!\n",
+            __FILE__, __func__, __LINE__);
+        return -1;
+    }
+    *result_size = length;
+
+
+    rc = EVP_DecryptFinal_ex(ctx, block + length, &length);
+    if (!rc)
+    {
+        EVP_CIPHER_free(cipher);
+        EVP_CIPHER_CTX_free(ctx);
+
+        printf("%s:%s:%d EVP_DecryptFinal failed!\n",
+            __FILE__, __func__, __LINE__);
+        return -1;
+    }
+    *result = block;
+    result_size += length;
 
     return 0;
 }
@@ -868,10 +964,10 @@ unpack_response(TALLOC_CTX *mem_ctx,
         return -1;
     }
 
-    gnutls_datum_t encrypted_cek_value = { .data = initial_data->enc_cek, .size = initial_data->enc_cek_size };
-    gnutls_datum_t decrypted_cek_value = { 0 };
+    uint8_t* decrypted_cek_data = NULL;
+    uint32_t decrypted_cek_size = 0;
 
-    rc = cek_decrypt(&kek, &encrypted_cek_value, &decrypted_cek_value);
+    rc = cek_decrypt(mem_ctx, kek.data, kek.size, initial_data->enc_cek, initial_data->enc_cek_size, &decrypted_cek_size, &decrypted_cek_data);
     if (rc != 0)
     {
         printf("%s:%s:%d Failed to decrypt content encryption key. Error = 0x%x (%s)\n",
@@ -880,6 +976,7 @@ unpack_response(TALLOC_CTX *mem_ctx,
         return -1;
     }
 
+    gnutls_datum_t decrypted_cek_value = { .data = decrypted_cek_data, .size = decrypted_cek_size };
     gnutls_datum_t iv =
     {
         .data = initial_data->enc_content_parameters,
@@ -890,9 +987,21 @@ unpack_response(TALLOC_CTX *mem_ctx,
         .data = initial_data->enc_content,
         .size = initial_data->enc_content_size
     };
-    gnutls_datum_t decrypted_data_value = { 0 };
+    gnutls_datum_t decrypted_data_value =
+    {
+        .data = NULL,
+        .size = 0
+    };
 
-    rc = content_decrypt(&decrypted_cek_value, &iv, &encrypted_data_value, &decrypted_data_value);
+    rc = content_decrypt(mem_ctx,
+                         decrypted_cek_value.data,
+                         decrypted_cek_value.size,
+                         iv.data,
+                         iv.size,
+                         encrypted_data_value.data,
+                         encrypted_data_value.size,
+                         &decrypted_data_value.size,
+                         &decrypted_data_value.data);
     if (rc != 0)
     {
         printf("%s:%s:%d Failed to decrypt encrypted content. Error = 0x%x (%s)\n",
