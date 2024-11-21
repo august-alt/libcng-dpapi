@@ -67,7 +67,7 @@ ncrypt_unprotect_secret(const uint8_t *data,
 
     if (!NT_STATUS_IS_OK(status))
     {
-        printf("Failed to establish RPC connection: %u\n", status.v);
+        printf("Failed to establish RPC connection: %s\n", nt_errstr(status));
         return 0;
     }
 
