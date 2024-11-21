@@ -840,7 +840,17 @@ content_decrypt(TALLOC_CTX* mem_ctx,
                 uint32_t* result_size,
                 uint8_t **result)
 {
-    EVP_CIPHER_CTX* ctx = NULL;
+    const uint32_t tagLength = 16;
+
+    uint8_t* block = talloc_zero_array(mem_ctx, uint8_t, value_size - tagLength);
+    if (!block)
+    {
+        printf("%s:%s:%d Unable to allocate output buffer.\n",
+               __FILE__, __func__, __LINE__);
+
+        return -1;
+    }
+
     int length = 0;
     int rc = 0;
     OSSL_PARAM params[3] =
@@ -848,11 +858,11 @@ content_decrypt(TALLOC_CTX* mem_ctx,
         OSSL_PARAM_END, OSSL_PARAM_END, OSSL_PARAM_END
     };
 
-    ctx = EVP_CIPHER_CTX_new();
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
     if (!ctx)
     {
         printf("%s:%s:%d EVP_CIPHER_CTX_new failed!\n",
-            __FILE__, __func__, __LINE__);
+               __FILE__, __func__, __LINE__);
         return -1;
     }
 
@@ -860,35 +870,38 @@ content_decrypt(TALLOC_CTX* mem_ctx,
     if (!cipher)
     {
         printf("%s:%s:%d EVP_aes_256_wrap failed!\n",
-            __FILE__, __func__, __LINE__);
+               __FILE__, __func__, __LINE__);
+
         return -1;
     }
 
-    const uint32_t tagLength = 16;
-
-    uint8_t* block = talloc_zero_array(mem_ctx, uint8_t, value_size - tagLength);
-    if (!result)
-    {
-        printf("%s:%s:%d Unable to allocate output buffer.\n",
-               __FILE__, __func__, __LINE__);
-
-        return false;
-    }
-
-    uint8_t tag[tagLength];
-    size_t iv_len = iv_size;
-    memcpy(tag, value + value_size - tagLength, tagLength);
-    params[0] = OSSL_PARAM_construct_size_t(OSSL_CIPHER_PARAM_AEAD_IVLEN, &iv_len);
-    params[1] = OSSL_PARAM_construct_octet_string(OSSL_CIPHER_PARAM_AEAD_TAG, tag, tagLength);
-
-    rc = EVP_DecryptInit_ex2(ctx, cipher, cek, iv, params);
+    rc = EVP_DecryptInit_ex(ctx, cipher, NULL, NULL, NULL);
     if (!rc)
     {
         EVP_CIPHER_free(cipher);
         EVP_CIPHER_CTX_free(ctx);
 
         printf("%s:%s:%d EVP_DecryptInit_ex2 failed!\n",
-            __FILE__, __func__, __LINE__);
+               __FILE__, __func__, __LINE__);
+        return -1;
+    }
+
+    uint8_t tag[tagLength];
+    memcpy(tag, value + value_size - tagLength, tagLength);
+
+    int RANDOM_DELTA = 4;
+
+    // TODO: Provide proper iv_size.
+    // EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, (size_t)iv_size, NULL);
+
+    rc = EVP_DecryptInit_ex(ctx, NULL, NULL, cek, iv + RANDOM_DELTA);
+    if (!rc)
+    {
+        EVP_CIPHER_free(cipher);
+        EVP_CIPHER_CTX_free(ctx);
+
+        printf("%s:%s:%d EVP_DecryptInit_ex2 failed!\n",
+               __FILE__, __func__, __LINE__);
         return -1;
     }
 
@@ -899,11 +912,21 @@ content_decrypt(TALLOC_CTX* mem_ctx,
         EVP_CIPHER_CTX_free(ctx);
 
         printf("%s:%s:%d EVP_DecryptUpdate failed!\n",
-            __FILE__, __func__, __LINE__);
+               __FILE__, __func__, __LINE__);
         return -1;
     }
     *result_size = length;
 
+    rc = EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, tagLength, tag);
+    if (!rc)
+    {
+        EVP_CIPHER_free(cipher);
+        EVP_CIPHER_CTX_free(ctx);
+
+        printf("%s:%s:%d EVP_DecryptUpdate failed!\n",
+               __FILE__, __func__, __LINE__);
+        return -1;
+    }
 
     rc = EVP_DecryptFinal_ex(ctx, block + length, &length);
     if (!rc)
@@ -916,7 +939,7 @@ content_decrypt(TALLOC_CTX* mem_ctx,
         return -1;
     }
     *result = block;
-    result_size += length;
+    *result_size += length;
 
     return 0;
 }
