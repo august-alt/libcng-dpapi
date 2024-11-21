@@ -453,7 +453,7 @@ compute_secret_key(TALLOC_CTX* ctx,
 
         }
 
-        if (out_length + md_size < length)
+        if (out_length + md_size <= length)
         {
             memcpy(result + out_length, md_value, md_size);
         }
