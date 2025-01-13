@@ -42,6 +42,7 @@
 #include "pkcs7_p.h"
 #include "pkcs7/KEKRecipientInfo.h"
 #include "pkcs7/EnvelopedData.h"
+#include "pkcs7/MyKeyInfo.h"
 
 const uint8_t KDS_SERVICE_LABEL[] = { 0x4b, 0x00, 0x44, 0x00, 0x53, 0x00, 0x20, 0x00, 0x73, 0x00, 0x65, 0x00, 0x72, 0x00, 0x76, 0x00, 0x69, 0x00, 0x63, 0x00, 0x65, 0x00, 0x00, 0x00 };
 const uint8_t KDS_PUBLIC_KEY_LABEL[] = { 0x4b, 0x00, 0x44, 0x00, 0x53, 0x00, 0x20, 0x00, 0x70, 0x00, 0x75, 0x00, 0x62, 0x00, 0x6c, 0x00, 0x69, 0x00, 0x63, 0x00, 0x20, 0x00, 0x6b, 0x00, 0x65, 0x00, 0x79, 0x00, 0x00, 0x00 };
@@ -829,6 +830,25 @@ cek_decrypt(TALLOC_CTX* mem_ctx,
     return 0;
 }
 
+static MyKeyInfo_t *
+decode_MyKeyInfo(
+    const uint8_t* data,
+    const uint32_t size
+)
+{
+    asn_dec_rval_t rval;
+    MyKeyInfo_t *my_key_info = NULL;
+
+    rval = ber_decode(0, &asn_DEF_MyKeyInfo, (void**)&my_key_info, data, size);
+    if (rval.code != RC_OK)
+    {
+        printf("%s:%s:%d Failed to decode MyKeyInfo_t object. Error = 0x%x (%s)\n",
+               __FILE__, __func__, __LINE__, rval.code, "");
+    }
+
+    return my_key_info;
+}
+
 static uint32_t
 content_decrypt(TALLOC_CTX* mem_ctx,
                 uint8_t* cek,
@@ -869,6 +889,7 @@ content_decrypt(TALLOC_CTX* mem_ctx,
     EVP_CIPHER* cipher = EVP_CIPHER_fetch(NULL, "AES-256-GCM", NULL);
     if (!cipher)
     {
+        EVP_CIPHER_CTX_free(ctx);
         printf("%s:%s:%d EVP_aes_256_wrap failed!\n",
                __FILE__, __func__, __LINE__);
 
@@ -886,15 +907,23 @@ content_decrypt(TALLOC_CTX* mem_ctx,
         return -1;
     }
 
+    MyKeyInfo_t *iv_key_info = decode_MyKeyInfo(iv, iv_size);
+    if (!iv_key_info)
+    {
+        EVP_CIPHER_free(cipher);
+        EVP_CIPHER_CTX_free(ctx);
+
+        printf("%s:%s:%d decode_IA5String_t failed!\n",
+               __FILE__, __func__, __LINE__);
+        return -1;
+    }
+
     uint8_t tag[tagLength];
     memcpy(tag, value + value_size - tagLength, tagLength);
 
-    int RANDOM_DELTA = 4;
+    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, (size_t)iv_key_info->iv.size, NULL);
 
-    // TODO: Provide proper iv_size.
-    // EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, (size_t)iv_size, NULL);
-
-    rc = EVP_DecryptInit_ex(ctx, NULL, NULL, cek, iv + RANDOM_DELTA);
+    rc = EVP_DecryptInit_ex(ctx, NULL, NULL, cek, iv_key_info->iv.buf);
     if (!rc)
     {
         EVP_CIPHER_free(cipher);
