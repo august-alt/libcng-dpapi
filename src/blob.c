@@ -52,6 +52,9 @@ const uint8_t KDS_PUBLIC_KEY_LABEL[] = { 0x4b, 0x00, 0x44, 0x00, 0x53, 0x00, 0x2
 
 const uint8_t SHA512_UTF_16_LE[] = { 0x53, 0x00, 0x48, 0x00, 0x41, 0x00, 0x35, 0x00, 0x31, 0x00, 0x32, 0x00, 0x00, 0x00 };
 
+const uint8_t DH_UTF_16_LE[] = { 0x44, 0x00, 0x48, 0x00, 0x00, 0x00 };
+const uint8_t ECDH_UTF_16_LE[] = {};
+
 #define CONTENT_TYPE_ENVELOPED_DATA_OID "1.2.840.113549.1.7.3"
 #define MAX_BUFFER_SIZE 16384
 
@@ -604,8 +607,25 @@ compute_kek_from_public_key(TALLOC_CTX* ctx,
                             uint8_t** out)
 {
     uint8_t* private_key = talloc_zero_array(ctx, uint8_t, private_key_size);
+    uint8_t* secret_algorithm_utf16_le = 0;
+    uint32_t secret_algorithm_size = 0;
 
-    uint8_t* secret_algorithm_utf16_le = NULL;
+    if (strncmp("DH", secret_algorithm, 2) == 0)
+    {
+        secret_algorithm_utf16_le = DH_UTF_16_LE;
+        secret_algorithm_size = sizeof(DH_UTF_16_LE);
+    }
+    else if (strncmp("ECDH_P", secret_algorithm, 6) == 0)
+    {
+        secret_algorithm_utf16_le = ECDH_UTF_16_LE;
+        secret_algorithm_size = sizeof(ECDH_UTF_16_LE);
+    }
+    else
+    {
+        printf("%s:%s:%d Unsupported type of encryption %s.\n",
+               __FILE__, __func__, __LINE__, secret_algorithm);
+        return -1;
+    }
 
     if (!compute_kdf(hash_algorithm,
                      seed,
@@ -613,7 +633,7 @@ compute_kek_from_public_key(TALLOC_CTX* ctx,
                      KDS_SERVICE_LABEL,
                      sizeof(KDS_SERVICE_LABEL),
                      secret_algorithm_utf16_le,
-                     sizeof(secret_algorithm_utf16_le),
+                     secret_algorithm_size,
                      private_key_size,
                      &private_key))
     {
