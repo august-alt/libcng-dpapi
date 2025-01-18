@@ -32,6 +32,9 @@
 #include <gnutls/crypto.h>
 #include <gnutls/abstract.h>
 
+#include <openssl/bio.h>
+#include <openssl/param_build.h>
+
 #include <openssl/evp.h>
 #include <openssl/err.h>
 #include <openssl/core_names.h>
