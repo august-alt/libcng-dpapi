@@ -329,6 +329,7 @@ compute_l2_key(TALLOC_CTX* ctx,
         }
 
         l2_key = new_l2_key;
+        key_envelope->l2_key_len = new_l2_key_size;
     }
 
     while (l2 != request_2)
