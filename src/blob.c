@@ -659,7 +659,7 @@ compute_kek_from_public_key(TALLOC_CTX* ctx,
                             uint8_t** out)
 {
     uint8_t* private_key = talloc_zero_array(ctx, uint8_t, private_key_size);
-    uint8_t* secret_algorithm_utf16_le = 0;
+    const uint8_t* secret_algorithm_utf16_le = 0;
     uint32_t secret_algorithm_size = 0;
 
     if (strncmp("DH", secret_algorithm, 2) == 0)
