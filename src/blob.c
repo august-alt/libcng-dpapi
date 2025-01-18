@@ -483,6 +483,53 @@ error_exit:
 }
 
 static uint32_t
+decode_shared_secret(struct FfcDhKey *dh_parameters,
+                     const uint8_t* private_key,
+                     const uint32_t private_key_size,
+                     uint8_t** shared_secret,
+                     size_t *shared_secret_size)
+{
+    int result = 0;
+
+    BN_CTX *ctx = NULL;
+    BIGNUM *shared = NULL;
+
+    ctx = BN_CTX_new_ex(NULL);
+    if (ctx == NULL)
+    {
+        goto error_exit;
+    }
+    BN_CTX_start(ctx);
+    shared = BN_CTX_get(ctx);
+    if (shared == NULL)
+    {
+        goto error_exit;
+    }
+
+    BIGNUM *bp = BN_bin2bn(dh_parameters->field_order, dh_parameters->key_length, NULL);
+    BIGNUM *bg = BN_bin2bn(dh_parameters->generator, dh_parameters->key_length, NULL);
+    BIGNUM *pub_key = BN_bin2bn(dh_parameters->public_key, dh_parameters->key_length, NULL);
+    BIGNUM *priv_key = BN_bin2bn(private_key, private_key_size, NULL);
+
+    result = BN_mod_exp(shared, pub_key, priv_key, bp, ctx);
+    if (result == 0)
+    {
+        goto error_exit;
+    }
+
+    *shared_secret = OPENSSL_malloc(dh_parameters->key_length);
+
+    result = BN_bn2binpad(shared, *shared_secret, BN_num_bytes(bp));
+    *shared_secret_size = dh_parameters->key_length;
+
+    error_exit:
+        BN_clear(shared); /* (Step 2) destroy intermediate values */
+        BN_CTX_end(ctx);
+        BN_CTX_free(ctx);
+        return result;
+}
+
+static uint32_t
 compute_kek(TALLOC_CTX* ctx,
             const char* hash_algorithm,
             const char* secret_algorithm,
@@ -499,6 +546,7 @@ compute_kek(TALLOC_CTX* ctx,
     enum ndr_err_code ndr_status = NDR_ERR_SUCCESS;
     char* secret_hash_algorithm = "";
     uint8_t* shared_secret = NULL;
+    uint32_t shared_secret_length = 0;
 
     if (strncasecmp(secret_algorithm, "DH", 2) == 0)
     {
@@ -520,17 +568,20 @@ compute_kek(TALLOC_CTX* ctx,
             return false;
         }
 
-        uint32_t secret_shared_int = (uint32_t)pow(*((uint32_t*)dh_parameters.public_key), htobe32(*((uint32_t*)private_key))) % (*(uint32_t*)dh_parameters.field_order);
-        shared_secret = (uint8_t*)talloc_zero(ctx, uint32_t);
-        if (!shared_secret)
+        shared_secret_length = dh_parameters.key_length;
+        size_t shared_secret_size = 0;
+        if (decode_shared_secret(&dh_parameters,
+                                 private_key,
+                                 private_key_size,
+                                 &shared_secret,
+                                 &shared_secret_size) == 0)
         {
-            printf("%s:%s:%d Unable to allocate DH shared secret. Error = 0x%x (%s)\n",
-                   __FILE__, __func__, __LINE__, ndr_status, ndr_errstr(ndr_status));
+            printf("%s:%s:%d Unable to decode shared secret!.\n",
+                   __FILE__, __func__, __LINE__);
 
             return false;
         }
-        uint32_t* shared_secret_ptr = (uint32_t*)shared_secret;
-        *shared_secret_ptr = htobe32(secret_shared_int);
+
         secret_hash_algorithm = "SHA256";
     }
     else if (strncasecmp(secret_algorithm, "ECDH_P", 6) == 0)
@@ -560,7 +611,7 @@ compute_kek(TALLOC_CTX* ctx,
     if (!compute_secret_key(ctx,
                             secret_hash_algorithm,
                             shared_secret,
-                            sizeof(uint32_t),
+                            shared_secret_length,
                             other_info,
                             other_info_length,
                             &secret_length,
