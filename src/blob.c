@@ -40,6 +40,7 @@
 #include <openssl/core_names.h>
 #include <openssl/kdf.h>
 #include <openssl/params.h>
+#include <openssl/rand.h>
 #include <openssl/ssl.h>
 
 #include "pkcs7_p.h"
@@ -1141,4 +1142,256 @@ unpack_response(TALLOC_CTX *mem_ctx,
     *decrypted_data_size = decrypted_data_value.size;
 
     return 0;
+}
+
+const int CEK_LENGTH = 256 / 8;
+const int CEK_IV_LENGTH = 12;
+const int RAND_OK = 1;
+
+const int DEFAULT_TAG_SIZE = 16;
+
+static int32_t
+content_encrypt(const uint8_t *data,
+                const uint32_t data_size,
+                const uint8_t *cek,
+                const uint32_t cek_size,
+                const uint8_t *cek_iv,
+                const uint32_t cek_iv_size,
+                uint8_t **out,
+                uint32_t *out_length)
+{
+    int32_t rc = -1;
+    uint8_t tag[DEFAULT_TAG_SIZE] = {};
+    uint32_t tag_length = DEFAULT_TAG_SIZE;
+
+    (void)cek_size;
+
+    OSSL_PARAM params[2] = {
+        OSSL_PARAM_END, OSSL_PARAM_END
+    };
+
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+    if (!ctx)
+    {
+        printf("%s:%s:%d EVP_CIPHER_CTX_new failed!\n",
+               __FILE__, __func__, __LINE__);
+        return rc;
+    }
+
+    EVP_CIPHER* cipher = EVP_CIPHER_fetch(NULL, "AES-256-GCM", NULL);
+    if (!cipher)
+    {
+        EVP_CIPHER_CTX_free(ctx);
+        printf("%s:%s:%d EVP_aes_256_wrap failed!\n",
+               __FILE__, __func__, __LINE__);
+
+        return rc;
+    }
+
+    size_t tmp_iv_size = cek_iv_size;
+
+    /* Set IV length if default 96 bits is not appropriate */
+    params[0] = OSSL_PARAM_construct_size_t(OSSL_CIPHER_PARAM_AEAD_IVLEN,
+                                            &tmp_iv_size);
+
+    if (!EVP_EncryptInit_ex2(ctx, cipher, cek, cek_iv, params))
+    {
+        printf("%s:%s:%d EVP_EncryptInit_ex failed!\n",
+               __FILE__, __func__, __LINE__);
+        goto error_exit;
+    }
+
+    if (!EVP_EncryptUpdate(ctx, *out, out_length, data, data_size))
+    {
+        printf("%s:%s:%d EVP_EncryptUpdate failed!\n",
+               __FILE__, __func__, __LINE__);
+
+        goto error_exit;
+    }
+
+    printf("Ciphertext:\n");
+    BIO_dump_fp(stdout, *out, *out_length);
+
+    uint32_t tmp_length = 0;
+
+    /* Finalise: note get no output for GCM */
+    if (!EVP_EncryptFinal_ex(ctx, *out, &tmp_length))
+    {
+        printf("%s:%s:%d EVP_EncryptFinal_ex failed!\n",
+               __FILE__, __func__, __LINE__);
+
+        goto error_exit;
+    }
+
+    /* Get tag */
+    params[0] = OSSL_PARAM_construct_octet_string(OSSL_CIPHER_PARAM_AEAD_TAG,
+                                                  tag, tag_length);
+
+    if (!EVP_CIPHER_CTX_get_params(ctx, params))
+    {
+        printf("%s:%s:%d EVP_CIPHER_CTX_get_params failed!\n",
+               __FILE__, __func__, __LINE__);
+
+        goto error_exit;
+    }
+
+    /* Output tag */
+    printf("Tag:\n");
+    BIO_dump_fp(stdout, tag, tag_length);
+
+    rc = 0;
+
+error_exit:
+    if (rc)
+    {
+        ERR_print_errors_fp(stderr);
+    }
+
+    EVP_CIPHER_free(cipher);
+    EVP_CIPHER_CTX_free(ctx);
+
+    return rc;
+}
+
+static int32_t
+cek_encrypt(const uint8_t *cek,
+            const uint32_t cek_size,
+            const uint8_t *kek,
+            const uint32_t kek_size,
+            uint8_t **encrypted_cek,
+            uint32_t *encrypted_cek_size)
+{
+    (void)kek_size;
+
+    int32_t rc = -1;
+    int32_t tmplen = 0;
+
+    /* Create a context for the encrypt operation */
+    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+    if (!ctx)
+    {
+        goto error_exit;
+    }
+
+    EVP_CIPHER_CTX_set_flags(ctx, EVP_CIPHER_CTX_FLAG_WRAP_ALLOW);
+
+    // TODO: Add global library context and other parameters to EVP_CIPHER_fetch.
+    /* Fetch the cipher implementation */
+    EVP_CIPHER *cipher = EVP_CIPHER_fetch(NULL, "AES-256-WRAP", NULL);
+    if (!cipher)
+    {
+        goto error_exit;
+    }
+
+    /*
+     * Initialise an encrypt operation with the cipher/mode, key and IV.
+     * We are not setting any custom params so let params be just NULL.
+     */
+    if (!EVP_EncryptInit_ex2(ctx, cipher, kek, NULL /* iv */, /* params */ NULL))
+    {
+        goto error_exit;
+    }
+
+    /* Encrypt plaintext */
+    if (!EVP_EncryptUpdate(ctx, *encrypted_cek, encrypted_cek_size, cek, cek_size))
+    {
+        goto error_exit;
+    }
+
+    /* Finalise: there can be some additional output from padding */
+    if (!EVP_EncryptFinal_ex(ctx, *encrypted_cek + *encrypted_cek_size, &tmplen))
+    {
+        goto error_exit;
+    }
+    *encrypted_cek_size += tmplen;
+
+    /* Output encrypted block */
+    printf("Ciphertext (outlen:%d):\n", *encrypted_cek_size);
+    BIO_dump_fp(stdout, *encrypted_cek, *encrypted_cek_size);
+
+    rc = 0;
+
+error_exit:
+    if (rc)
+    {
+        ERR_print_errors_fp(stderr);
+    }
+
+    EVP_CIPHER_free(cipher);
+    EVP_CIPHER_CTX_free(ctx);
+
+    return rc;
+}
+
+uint32_t
+create_blob(const uint8_t *data,
+            const uint32_t data_size,
+            const uint8_t *key_envelope,
+            const uint32_t key_envelope_size,
+            const void *security_descriptor,
+            uint8_t **encrypted_data,
+            uint32_t *encrypted_data_size)
+{
+    int32_t rc = -1;
+
+    uint8_t* cek = NULL;
+    uint8_t* cek_iv = NULL;
+
+    if (RAND_bytes(cek_iv, CEK_IV_LENGTH) != RAND_OK)
+    {
+        printf("%s:%s:%d Failed to create cek iv. Error = 0x%x (%s)\n",
+               __FILE__, __func__, __LINE__, rc, "Content encryption failed!");
+        goto error_exit;
+    }
+
+    if (RAND_bytes(cek, CEK_LENGTH) != RAND_OK)
+    {
+        printf("%s:%s:%d Failed to create cek. Error = 0x%x (%s)\n",
+               __FILE__, __func__, __LINE__, rc, "Content encryption failed!");
+        goto error_exit;
+    }
+
+    uint8_t *encrypted_content = NULL;
+    uint32_t encrypted_content_size = 0;
+
+    if (content_encrypt(data,
+                        data_size,
+                        cek,
+                        CEK_LENGTH,
+                        cek_iv,
+                        CEK_IV_LENGTH,
+                        &encrypted_content,
+                        &encrypted_content_size) != 0)
+    {
+        printf("%s:%s:%d Failed to encrypt data. Error = 0x%x (%s)\n",
+               __FILE__, __func__, __LINE__, rc, "Content encryption failed!");
+
+        goto error_exit;
+    }
+
+    uint8_t *kek = NULL;
+    uint32_t kek_size = 0;
+
+    // TODO: Create kek.
+
+    uint8_t *encrypted_cek = NULL;
+    uint32_t encrypted_cek_size = 0;
+
+    if(cek_encrypt(cek,
+                   CEK_LENGTH,
+                   kek,
+                   kek_size,
+                   &encrypted_cek,
+                   &encrypted_cek_size))
+    {
+        printf("%s:%s:%d Failed to encrypt cek. Error = 0x%x (%s)\n",
+               __FILE__, __func__, __LINE__, rc, "Content encryption failed!");
+
+        goto error_exit;
+    }
+
+    // TODO: Pack blob.
+
+error_exit:
+    return rc;
 }
