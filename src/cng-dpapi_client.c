@@ -141,3 +141,71 @@ ncrypt_unprotect_secret(const uint8_t *data,
 
     return 0;
 }
+
+uint32_t
+ncrypt_protect_secret(const void *security_descriptor,
+                      const uint8_t* data,
+                      const uint32_t data_size,
+                      uint8_t **encrypted_data,
+                      uint32_t *encrypted_data_size,
+                      const char* server,
+                      const char* domain,
+                      const char* username)
+{
+    uint32_t rc = 0;
+    TALLOC_CTX *mem_ctx = talloc_named(NULL, 0, "ncrypt_protect_secret");
+    struct dcerpc_pipe* pipe = NULL;
+    NTSTATUS status = {0};
+
+    if (create_rpc_binding(mem_ctx, &pipe, server, domain, username) == -1)
+    {
+        rc = -1;
+        goto cleanup;
+    }
+
+    uint8_t *key_envelope = NULL;
+    uint32_t key_envelope_size = 0;
+
+    HRESULT operation_result = {0};
+
+    // TODO: Write explanation about -1 indices and NULL root_key_id.
+    const int32_t l0_index = -1, l1_index = -1, l2_index = -1;
+    struct GUID *root_key_id = NULL;
+
+    // TODO: Create security descriptor.
+    uint8_t *target_sd = NULL;
+    uint32_t target_sd_len = 0;
+
+    status = dcerpc_GetKey(pipe->binding_handle,
+                           mem_ctx,
+                           target_sd_len,
+                           target_sd,
+                           root_key_id,
+                           l0_index,
+                           l1_index,
+                           l2_index,
+                           &key_envelope_size,
+                           &key_envelope,
+                           &operation_result);
+
+    if (!NT_STATUS_IS_OK(status))
+    {
+        printf("Failed to perform RPC call: %s\n", nt_errstr(status));
+        rc = -1;
+        goto cleanup;
+    }
+
+    if (!HRES_IS_OK(operation_result))
+    {
+        printf("Failed to perform operation GetKey: %s\n", hresult_errstr(operation_result));
+        rc = -1;
+        goto cleanup;
+    }
+
+    rc = create_blob(data, data_size, key_envelope, key_envelope_size, security_descriptor, encrypted_data, encrypted_data_size);
+
+cleanup:
+    talloc_free(mem_ctx);
+
+    return rc;
+}

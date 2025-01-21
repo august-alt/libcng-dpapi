@@ -32,4 +32,14 @@ ncrypt_unprotect_secret(const uint8_t* data,
                         const char *domain,
                         const char* username);
 
+uint32_t
+ncrypt_protect_secret(const void* security_descriptor,
+                      const uint8_t* data,
+                      const uint32_t data_size,
+                      uint8_t **encrypted_data,
+                      uint32_t *encrypted_data_size,
+                      const char* server,
+                      const char* domain,
+                      const char* username);
+
 #endif//CNG_DPAPI_CLIENT_H
