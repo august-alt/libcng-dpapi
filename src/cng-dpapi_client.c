@@ -26,6 +26,45 @@
 
 #include "blob_p.h"
 
+static uint32_t
+create_rpc_binding(TALLOC_CTX *parent_ctx,
+                   struct dcerpc_pipe **pipe,
+                   const char *server,
+                   const char *domain,
+                   const char *username)
+{
+    TALLOC_CTX *mem_ctx = talloc_named(NULL, 0, "create_rpc_binding");
+    NTSTATUS status = {0};
+
+    char *server_name = server ? talloc_strdup(mem_ctx, server) : NULL;
+    char *domain_name = domain ? talloc_strdup(mem_ctx, domain) : NULL;
+    char *user_name = username ? talloc_strdup(mem_ctx, username) : NULL;
+
+    if (!server_name)
+    {
+        // TODO: Implement server lookup.
+    }
+
+    status = get_client_rpc_binding(
+                parent_ctx,
+                pipe,
+                server_name,
+                domain_name,
+                user_name);
+
+    if (!NT_STATUS_IS_OK(status))
+    {
+        printf("Failed to establish RPC connection: %s\n", nt_errstr(status));
+
+        talloc_free(mem_ctx);
+        return -1;
+    }
+
+    talloc_free(mem_ctx);
+
+    return 0;
+}
+
 uint32_t
 ncrypt_unprotect_secret(const uint8_t *data,
                         const uint32_t data_size,
@@ -45,30 +84,11 @@ ncrypt_unprotect_secret(const uint8_t *data,
     }
 
     struct dcerpc_pipe* pipe = NULL;
-    NTSTATUS status;
+    NTSTATUS status = {0};
 
-    char *server_name = server ? talloc_strdup(mem_ctx, server) : NULL;
-    char *domain_name = domain ? talloc_strdup(mem_ctx, domain)
-                               : talloc_strndup(mem_ctx, blob->key_identifier.domain_name,
-                                                blob->key_identifier.domain_name_len);
-    char *user_name = talloc_strdup(mem_ctx, username);
-
-    if (!server_name)
+    if (create_rpc_binding(mem_ctx, &pipe, server, domain ? domain : blob->key_identifier.domain_name, username) == -1)
     {
-        // TODO: Implement server lookup.
-    }
-
-    status = get_client_rpc_binding(
-                mem_ctx,
-                &pipe,
-                server_name,
-                domain_name,
-                user_name);
-
-    if (!NT_STATUS_IS_OK(status))
-    {
-        printf("Failed to establish RPC connection: %s\n", nt_errstr(status));
-        return 0;
+        return -1;
     }
 
     uint8_t *key_envelope = NULL;
