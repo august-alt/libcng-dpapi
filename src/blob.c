@@ -1639,8 +1639,16 @@ create_blob(const uint8_t *data,
 {
     int32_t rc = -1;
 
-    uint8_t* cek = NULL;
-    uint8_t* cek_iv = NULL;
+    uint8_t cek[CEK_LENGTH] = {};
+    uint8_t cek_iv[CEK_IV_LENGTH] = {};
+
+    TALLOC_CTX *mem_ctx = talloc_named(NULL, 0, "create_blob");
+    if (!mem_ctx)
+    {
+        printf("%s:%s:%d Unable to create new talloc named context. Error = 0x%x (%s)\n",
+               __FILE__, __func__, __LINE__, rc, "Content encryption failed!");
+        goto error_exit;
+    }
 
     if (RAND_bytes(cek_iv, CEK_IV_LENGTH) != RAND_OK)
     {
@@ -1676,18 +1684,25 @@ create_blob(const uint8_t *data,
 
     uint8_t *kek = NULL;
     uint32_t kek_size = 0;
+    struct KeyEnvelope *key_id = NULL;
 
-    // TODO: Create kek.
+    if (create_kek(mem_ctx, key_envelope, key_envelope_size, &kek, &kek_size, &key_id) != 0)
+    {
+        printf("%s:%s:%d Failed to create kek. Error = 0x%x (%s)\n",
+               __FILE__, __func__, __LINE__, rc, "Content encryption failed!");
+
+        goto error_exit;
+    }
 
     uint8_t *encrypted_cek = NULL;
     uint32_t encrypted_cek_size = 0;
 
-    if(cek_encrypt(cek,
-                   CEK_LENGTH,
-                   kek,
-                   kek_size,
-                   &encrypted_cek,
-                   &encrypted_cek_size))
+    if (cek_encrypt(cek,
+                    CEK_LENGTH,
+                    kek,
+                    kek_size,
+                    &encrypted_cek,
+                    &encrypted_cek_size))
     {
         printf("%s:%s:%d Failed to encrypt cek. Error = 0x%x (%s)\n",
                __FILE__, __func__, __LINE__, rc, "Content encryption failed!");
@@ -1698,5 +1713,10 @@ create_blob(const uint8_t *data,
     // TODO: Pack blob.
 
 error_exit:
+    OPENSSL_cleanse(cek, CEK_LENGTH);
+    OPENSSL_cleanse(cek_iv, CEK_IV_LENGTH);
+
+    talloc_free(mem_ctx);
+
     return rc;
 }
