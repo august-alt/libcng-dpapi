@@ -61,6 +61,15 @@ typedef struct blob
 struct GroupKeyEnvelope;
 typedef struct GroupKeyEnvelope GroupKeyEnvelope;
 
+uint32_t
+create_blob(const uint8_t* data,
+            const uint32_t data_size,
+            const uint8_t* key_envelope,
+            const uint32_t key_envelope_size,
+            const void* security_descriptor,
+            uint8_t **encrypted_data,
+            uint32_t *encrypted_data_size);
+
 blob_t*
 blob_unpack(TALLOC_CTX *mem_ctx, const uint8_t* data, const uint32_t size);
 
