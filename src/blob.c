@@ -1323,6 +1323,128 @@ error_exit:
     return rc;
 }
 
+static int32_t
+compute_peer_public_key(TALLOC_CTX *parent_ctx,
+                        const char* secret_algorithm,
+                        const uint32_t secret_algorithm_len,
+                        const uint8_t* secret_parameters,
+                        const uint32_t secret_parameters_len,
+                        const uint8_t* private_key,
+                        const uint32_t private_key_len,
+                        const uint8_t* peer_public_key,
+                        const uint32_t peer_public_key_len,
+                        uint32_t *size,
+                        uint8_t **out)
+{
+    int32_t rc = -1;
+
+    TALLOC_CTX *mem_ctx = talloc_named(NULL, 0, "create_kek");
+    if (!mem_ctx)
+    {
+        printf("%s:%s:%d Failed to create talloc context.\n",
+               __FILE__, __func__, __LINE__);
+
+        goto error_exit;
+    }
+
+    if (strncmp(secret_algorithm, "DH", secret_algorithm_len) == 0)
+    {
+        enum ndr_err_code ndr_status = NDR_ERR_SUCCESS;
+        struct FfcDhKey ffc_dh_key;
+
+        DATA_BLOB data_blob;
+        data_blob.data = (uint8_t*)peer_public_key;
+        data_blob.length = peer_public_key_len;
+        ndr_status = ndr_pull_struct_blob(&data_blob, mem_ctx, &ffc_dh_key, (ndr_pull_flags_fn_t)ndr_pull_FfcDhKey);
+        if (ndr_status != NDR_ERR_SUCCESS)
+        {
+            printf("%s:%s:%d Failed to decode FfcDhKey object. Error = 0x%x (%s)\n",
+                   __FILE__, __func__, __LINE__, ndr_status, ndr_errstr(ndr_status));
+            goto error_exit;
+        }
+        struct FfcDhKey *target_key = talloc_zero(mem_ctx, struct FfcDhKey);
+        if (!target_key)
+        {
+            printf("%s:%s:%d Failed to allocate FfcDhKey.\n",
+                   __FILE__, __func__, __LINE__);
+
+            goto error_exit;
+        }
+
+        uint8_t* shared_secret = NULL;
+        size_t shared_secret_size = 0;
+        if (decode_shared_secret(&ffc_dh_key, private_key, private_key_len, &shared_secret, &shared_secret_size) == 0)
+        {
+            printf("%s:%s:%d Failed to compute shared secret.\n",
+                   __FILE__, __func__, __LINE__);
+
+            goto error_exit;
+        }
+
+        target_key->magic = ffc_dh_key.magic;
+        target_key->field_order = talloc_memdup(target_key, ffc_dh_key.field_order, ffc_dh_key.key_length);
+        target_key->generator = talloc_memdup(target_key, ffc_dh_key.generator, ffc_dh_key.key_length);
+        target_key->key_length = ffc_dh_key.key_length;
+        target_key->public_key = talloc_memdup(target_key, shared_secret, shared_secret_size);
+
+        OPENSSL_free(shared_secret);
+
+        if (!target_key->field_order || !target_key->generator || !target_key->public_key)
+        {
+            printf("%s:%s:%d Failed to allocate target key.\n",
+                   __FILE__, __func__, __LINE__);
+
+            goto error_exit;
+        }
+
+        *size = sizeof(struct FfcDhKey);
+        *out = talloc_reparent(mem_ctx, parent_ctx, target_key);
+    }
+    else if (strncmp(secret_algorithm, "ECDH_P", secret_algorithm_len) == 0)
+    {
+        enum ndr_err_code ndr_status = NDR_ERR_SUCCESS;
+        struct ECDHKey ecdh_key;
+
+        DATA_BLOB data_blob;
+        data_blob.data = (uint8_t*)peer_public_key;
+        data_blob.length = peer_public_key_len;
+        ndr_status = ndr_pull_struct_blob(&data_blob, mem_ctx, &ecdh_key, (ndr_pull_flags_fn_t)ndr_pull_ECDHKey);
+        if (ndr_status != NDR_ERR_SUCCESS)
+        {
+            printf("%s:%s:%d Failed to decode ECDHKey object. Error = 0x%x (%s)\n",
+                   __FILE__, __func__, __LINE__, ndr_status, ndr_errstr(ndr_status));
+            goto error_exit;
+        }
+        struct ECDHKey *target_key = talloc_zero(mem_ctx, struct ECDHKey);
+        if (!target_key)
+        {
+            printf("%s:%s:%d Failed to allocate ECDHKey.\n",
+                   __FILE__, __func__, __LINE__);
+
+            goto error_exit;
+        }
+
+        // TODO: compute ecdh key.
+        // Derive private key.
+
+        *size = sizeof(struct ECDHKey);
+        *out = talloc_reparent(mem_ctx, parent_ctx, target_key);
+    }
+    else
+    {
+        printf("%s:%s:%d Unsupported secret algorithm.\n",
+               __FILE__, __func__, __LINE__);
+
+        goto error_exit;
+    }
+
+    rc = 0;
+
+error_exit:
+    talloc_free(mem_ctx);
+
+    return rc;
+}
 uint32_t
 create_blob(const uint8_t *data,
             const uint32_t data_size,
