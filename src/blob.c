@@ -1445,6 +1445,189 @@ error_exit:
 
     return rc;
 }
+
+static int32_t
+create_kek(TALLOC_CTX *parent_ctx,
+           const uint8_t *key_envelope_data,
+           const uint32_t key_envelope_data_size,
+           uint8_t **kek,
+           uint32_t *kek_size,
+           struct KeyEnvelope **key_id)
+{
+    int32_t rc = -1;
+
+    TALLOC_CTX *mem_ctx = talloc_named(NULL, 0, "create_kek");
+    if (!mem_ctx)
+    {
+        printf("%s:%s:%d Failed to create talloc context.\n",
+               __FILE__, __func__, __LINE__);
+
+        goto error_exit;
+    }
+
+    GroupKeyEnvelope *key_envelope = talloc_zero(mem_ctx, GroupKeyEnvelope);
+    enum ndr_err_code ndr_status = NDR_ERR_SUCCESS;
+
+    DATA_BLOB data_blob;
+    data_blob.data = (uint8_t*)key_envelope_data;
+    data_blob.length = key_envelope_data_size;
+    ndr_status = ndr_pull_struct_blob(&data_blob, mem_ctx, key_envelope, (ndr_pull_flags_fn_t)ndr_pull_GroupKeyEnvelope);
+    if (ndr_status != NDR_ERR_SUCCESS)
+    {
+        printf("%s:%s:%d Failed to decode GroupKeyEnvelope object. Error = 0x%x (%s)\n",
+               __FILE__, __func__, __LINE__, ndr_status, ndr_errstr(ndr_status));
+
+        goto error_exit;
+    }
+
+    if (strcmp(key_envelope->kdf_algorithm, "SP800_108_CTR_HMAC") != 0)
+    {
+        printf("%s:%s:%d Unsupported KDF algorithm.\n",
+               __FILE__, __func__, __LINE__);
+
+        goto error_exit;
+    }
+
+    struct KdfParameters kdf_parameters;
+
+    data_blob.data = key_envelope->kdf_parameters;
+    data_blob.length = key_envelope->kdf_parameters_len;
+    ndr_status = ndr_pull_struct_blob(&data_blob, mem_ctx, &kdf_parameters, (ndr_pull_flags_fn_t)ndr_pull_KdfParameters);
+    if (ndr_status != NDR_ERR_SUCCESS)
+    {
+        printf("%s:%s:%d Failed to decode KdfParameters object. Error = 0x%x (%s)\n",
+               __FILE__, __func__, __LINE__, ndr_status, ndr_errstr(ndr_status));
+        goto error_exit;
+    }
+
+    *kek_size = 32; // TODO: Set proper key size for now using educated guess.
+
+    uint8_t *key_info = NULL;
+    uint32_t key_info_size = 0;
+
+    if (key_envelope->flags & 1) // Is public.
+    {
+        // TODO: Allocate key because openssl does not do that.
+        uint8_t *private_key = NULL;
+        uint32_t private_key_size = key_envelope->private_key_len / 8;
+        if (RAND_bytes(private_key, private_key_size) != RAND_OK)
+        {
+            printf("%s:%s:%d Failed to create private key. Error = 0x%x (%s)\n",
+                   __FILE__, __func__, __LINE__, rc, "Content encryption failed!");
+
+            goto error_exit;
+        }
+
+        // TODO: Cleanup or allocate random bytes.
+
+        if (!compute_kek(mem_ctx,
+                         kdf_parameters.hash_algorithm,
+                         key_envelope->secret_agreement_algorithm,
+                         key_envelope->secret_agreement_algorithm_len,
+                         key_envelope->secret_agreement_parameters,
+                         key_envelope->secret_agreement_parameters_len,
+                         key_envelope->l2_key,
+                         key_envelope->l2_key_len,
+                         private_key,
+                         private_key_size,
+                         *kek_size,
+                         kek))
+        {
+            printf("%s:%s:%d Failed to derive key encryption key.\n",
+                   __FILE__, __func__, __LINE__);
+
+            goto error_exit;
+        }
+
+        if (compute_peer_public_key(mem_ctx,
+                                    key_envelope->secret_agreement_algorithm,
+                                    key_envelope->secret_agreement_algorithm_len,
+                                    key_envelope->secret_agreement_parameters,
+                                    key_envelope->secret_agreement_parameters_len,
+                                    private_key,
+                                    private_key_size,
+                                    key_envelope->l2_key,
+                                    key_envelope->l2_key_len,
+                                    &key_info_size,
+                                    &key_info) != 0)
+        {
+            printf("%s:%s:%d Failed to compute public key.\n",
+                   __FILE__, __func__, __LINE__);
+
+            goto error_exit;
+        }
+    }
+    else
+    {
+        // TODO: Allocate key because openssl does not do that.
+        uint8_t *public_key = NULL;
+        uint32_t public_key_size = *kek_size;
+        if (RAND_bytes(public_key, public_key_size) != RAND_OK)
+        {
+            printf("%s:%s:%d Failed to create cek iv. Error = 0x%x (%s)\n",
+                   __FILE__, __func__, __LINE__, rc, "Content encryption failed!");
+
+            goto error_exit;
+        }
+        if (!compute_kdf(kdf_parameters.hash_algorithm,
+                         key_envelope->l2_key,
+                         key_envelope->l2_key_len,
+                         KDS_SERVICE_LABEL,
+                         sizeof(KDS_SERVICE_LABEL),
+                         public_key,
+                         public_key_size,
+                         public_key_size,
+                         kek))
+        {
+            printf("%s:%s:%d Failed to compute kdf.\n",
+                   __FILE__, __func__, __LINE__);
+
+            goto error_exit;
+        }
+    }
+
+    struct KeyEnvelope *key_identifier = talloc_zero(mem_ctx, struct KeyEnvelope);
+    if (!key_identifier)
+    {
+        printf("%s:%s:%d Unable to allocate key identifier.\n",
+               __FILE__, __func__, __LINE__);
+
+        goto error_exit;
+    }
+
+    key_identifier->version = 1;
+    key_identifier->magic = 0x4b53444b;
+    key_identifier->flags = key_envelope->flags;
+    key_identifier->l0_index = key_envelope->l0_index;
+    key_identifier->l1_index = key_envelope->l1_index;
+    key_identifier->l2_index = key_envelope->l2_index;
+    key_identifier->root_key_id = key_envelope->root_key_id;
+    key_identifier->additional_info = talloc_memdup(key_identifier, key_info, key_info_size);
+    key_identifier->additional_info_len = key_info_size;
+    key_identifier->domain_name = talloc_strndup(key_identifier, key_envelope->domain_name, key_envelope->domain_name_len);
+    key_identifier->forest_name = talloc_strndup(key_identifier, key_envelope->forest_name, key_envelope->forest_name_len);
+
+    if (!key_identifier->additional_info
+    || !key_identifier->domain_name
+    || !key_identifier->forest_name)
+    {
+        printf("%s:%s:%d Unable to allocate key identifier fields.\n",
+               __FILE__, __func__, __LINE__);
+
+        goto error_exit;
+    }
+
+    *kek = talloc_reparent(mem_ctx, parent_ctx, *kek);
+    *key_id = talloc_reparent(mem_ctx, parent_ctx, key_identifier);
+
+    rc = 0;
+
+error_exit:
+    talloc_free(mem_ctx);
+
+    return rc;
+}
+
 uint32_t
 create_blob(const uint8_t *data,
             const uint32_t data_size,
