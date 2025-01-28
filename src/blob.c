@@ -58,6 +58,13 @@ const uint8_t DH_UTF_16_LE[] = { 0x44, 0x00, 0x48, 0x00, 0x00, 0x00 };
 const uint8_t ECDH_UTF_16_LE[] = {};
 
 #define CONTENT_TYPE_ENVELOPED_DATA_OID "1.2.840.113549.1.7.3"
+#define CONTENT_TYPE_DATA_OID "1.2.840.113549.1.7.1"
+
+#define MICROSOFT_SOFTWARE_OID "1.3.6.1.4.1.311.74.1"
+
+#define AES256_WRAP_OID "2.16.840.1.101.3.4.1.45"
+#define AES256_GCM_OID "2.16.840.1.101.3.4.1.46"
+
 #define MAX_BUFFER_SIZE 16384
 
 blob_t *
