@@ -44,6 +44,7 @@
 #include <openssl/ssl.h>
 
 #include "pkcs7_p.h"
+#include "pkcs7/ContentInfo.h"
 #include "pkcs7/KEKRecipientInfo.h"
 #include "pkcs7/EnvelopedData.h"
 #include "pkcs7/MyKeyInfo.h"
