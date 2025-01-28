@@ -1636,6 +1636,150 @@ error_exit:
     return rc;
 }
 
+static int
+any_consume_bytes(const void *buffer,
+                         size_t size,
+                         void *data)
+{
+    ANY_t *key = data;
+    memcpy(key->buf, buffer, size);
+    key->size = size;
+    return key->buf ? 0 : -1;
+}
+
+int32_t
+pack_blob(const struct KeyEnvelope *key_identifier,
+          const uint8_t *target_sd,
+          const uint32_t target_sd_size,
+          const uint8_t *encrypted_cek,
+          const uint32_t encrypted_cek_size,
+          const uint8_t *encrypted_content,
+          const uint32_t encrypted_content_size,
+          const uint8_t *cek_iv,
+          const uint32_t cek_iv_size,
+          uint32_t *size,
+          uint8_t **out)
+{
+    int32_t rc = -1;
+
+    TALLOC_CTX *mem_ctx = talloc_named(NULL, 0, "create_blob");
+    if (!mem_ctx)
+    {
+        printf("%s:%s:%d Unable to create new talloc named context. Error = 0x%x (%s)\n",
+               __FILE__, __func__, __LINE__, rc, "Content packing failed!");
+        goto error_exit;
+    }
+
+    KEKRecipientInfo_t *kekInfo = talloc_zero(mem_ctx, KEKRecipientInfo_t);
+    if (!kekInfo)
+    {
+        printf("%s:%s:%d Unable to allocate kekInfo. Error = 0x%x (%s)\n",
+               __FILE__, __func__, __LINE__, rc, "Content packing failed!");
+        goto error_exit;
+    }
+
+    OtherKeyAttribute_t other_key_attribute;
+    other_key_attribute.keyAttr = talloc(mem_ctx, ANY_t);
+    other_key_attribute.keyAttr->buf = (uint8_t*)target_sd;
+    other_key_attribute.keyAttr->size = target_sd_size;
+    other_key_attribute.keyAttrId.buf = talloc_strdup(mem_ctx, MICROSOFT_SOFTWARE_OID);
+    other_key_attribute.keyAttrId.size = strlen(MICROSOFT_SOFTWARE_OID);
+
+    enum ndr_err_code ndr_status = NDR_ERR_SUCCESS;
+    DATA_BLOB data_blob = {};
+    ndr_status = ndr_push_struct_blob(&data_blob, mem_ctx, key_identifier, (ndr_push_flags_fn_t)ndr_push_KeyEnvelope);
+    if (ndr_status != NDR_ERR_SUCCESS)
+    {
+        printf("%s:%s:%d Failed to encode KeyEnvelope object. Error = 0x%x (%s)\n",
+               __FILE__, __func__, __LINE__, ndr_status, ndr_errstr(ndr_status));
+
+        goto error_exit;
+    }
+
+    KEKIdentifier_t kek_identifier;
+    kek_identifier.date = talloc(mem_ctx, GeneralizedTime_t);
+    kek_identifier.keyIdentifier.buf = data_blob.data;
+    kek_identifier.keyIdentifier.size = data_blob.length;
+    kek_identifier.other = &other_key_attribute;
+
+    AlgorithmIdentifier_t algorithm_identifier;
+    algorithm_identifier.algorithm.buf = talloc_strdup(mem_ctx, AES256_WRAP_OID);
+    algorithm_identifier.algorithm.size = strlen(AES256_WRAP_OID);
+    algorithm_identifier.parameters = NULL;
+
+    kekInfo->version = CMSVersion_v4;
+    kekInfo->kekid = kek_identifier;
+    kekInfo->keyEncryptionAlgorithm = algorithm_identifier;
+    kekInfo->encryptedKey.buf = (uint8_t*)encrypted_cek;
+    kekInfo->encryptedKey.size = encrypted_cek_size;
+
+    MyKeyInfo_t my_key_info;
+    my_key_info.modulus = 16;
+    my_key_info.iv.buf = (uint8_t*)cek_iv;
+    my_key_info.iv.size = cek_iv_size;
+
+    EnvelopedData_t enveloped_data;
+    enveloped_data.version = CMSVersion_v2;
+    enveloped_data.recipientInfos.list.count = 1;
+    if (ASN_SET_ADD(&enveloped_data.recipientInfos.list, kekInfo))
+    {
+        printf("%s:%s:%d Failed to add RecipientInfo_t to list.\n",
+               __FILE__, __func__, __LINE__);
+
+        goto error_exit;
+    }
+
+    EncryptedContentInfo_t *encrypted_content_info = &enveloped_data.encryptedContentInfo;
+    encrypted_content_info->contentEncryptionAlgorithm.algorithm.buf = talloc_strdup(mem_ctx, AES256_GCM_OID);
+    encrypted_content_info->contentEncryptionAlgorithm.algorithm.size = strlen(AES256_GCM_OID);
+    encrypted_content_info->contentType.buf = talloc_strdup(mem_ctx, CONTENT_TYPE_DATA_OID);
+    encrypted_content_info->contentType.size = strlen(CONTENT_TYPE_DATA_OID);
+    encrypted_content_info->encryptedContent->buf = (uint8_t*)encrypted_content;
+    encrypted_content_info->encryptedContent->size = encrypted_content_size;
+
+    asn_enc_rval_t erval;
+    erval = der_encode(&asn_DEF_MyKeyInfo, &my_key_info, any_consume_bytes, encrypted_content_info->contentEncryptionAlgorithm.parameters);
+    if (erval.encoded == -1)
+    {
+        printf("%s:%s:%d Cannot encode. Type = %s (%s)\n",
+               __FILE__, __func__, __LINE__, erval.failed_type->name, strerror(errno));
+
+        goto error_exit;
+    }
+
+    ContentInfo_t content_info;
+    content_info.contentType.buf = talloc_strdup(mem_ctx, CONTENT_TYPE_ENVELOPED_DATA_OID);
+    content_info.contentType.size = strlen(CONTENT_TYPE_ENVELOPED_DATA_OID);
+    erval = der_encode(&asn_DEF_EnvelopedData, &enveloped_data, any_consume_bytes, &content_info.content);
+    if (erval.encoded == -1)
+    {
+        printf("%s:%s:%d Cannot encode. Type = %s (%s)\n",
+               __FILE__, __func__, __LINE__, erval.failed_type->name, strerror(errno));
+
+        goto error_exit;
+    }
+
+    ANY_t result = {};
+    erval = der_encode(&asn_DEF_ContentInfo, &content_info, any_consume_bytes, &result);
+    if (erval.encoded == -1)
+    {
+        printf("%s:%s:%d Cannot encode. Type = %s (%s)\n",
+               __FILE__, __func__, __LINE__, erval.failed_type->name, strerror(errno));
+
+        goto error_exit;
+    }
+
+    *size = result.size;
+    *out = result.buf;
+
+    rc = 0;
+
+error_exit:
+    talloc_free(mem_ctx);
+
+    return rc;
+}
+
 uint32_t
 create_blob(const uint8_t *data,
             const uint32_t data_size,
@@ -1718,7 +1862,23 @@ create_blob(const uint8_t *data,
         goto error_exit;
     }
 
-    // TODO: Pack blob.
+    if (pack_blob(key_id,
+                  NULL,
+                  0,
+                  encrypted_cek,
+                  encrypted_cek_size,
+                  encrypted_content,
+                  encrypted_content_size,
+                  cek_iv,
+                  CEK_IV_LENGTH,
+                  encrypted_data_size,
+                  encrypted_data))
+    {
+        printf("%s:%s:%d Failed to pack content. Error = 0x%x (%s)\n",
+               __FILE__, __func__, __LINE__, rc, "Content encryption failed!");
+
+        goto error_exit;
+    }
 
 error_exit:
     OPENSSL_cleanse(cek, CEK_LENGTH);
