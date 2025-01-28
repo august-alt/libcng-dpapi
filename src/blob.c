@@ -1515,10 +1515,9 @@ create_kek(TALLOC_CTX *parent_ctx,
 
     if (key_envelope->flags & 1) // Is public.
     {
-        // TODO: Allocate key because openssl does not do that.
-        uint8_t *private_key = NULL;
         uint32_t private_key_size = key_envelope->private_key_len / 8;
-        if (RAND_bytes(private_key, private_key_size) != RAND_OK)
+        uint8_t *private_key = talloc_array(mem_ctx, uint8_t, private_key_size);
+        if (!private_key || RAND_bytes(private_key, private_key_size) != RAND_OK)
         {
             printf("%s:%s:%d Failed to create private key. Error = 0x%x (%s)\n",
                    __FILE__, __func__, __LINE__, rc, "Content encryption failed!");
@@ -1567,10 +1566,9 @@ create_kek(TALLOC_CTX *parent_ctx,
     }
     else
     {
-        // TODO: Allocate key because openssl does not do that.
-        uint8_t *public_key = NULL;
         uint32_t public_key_size = *kek_size;
-        if (RAND_bytes(public_key, public_key_size) != RAND_OK)
+        uint8_t *public_key = talloc_array(mem_ctx, uint8_t, public_key_size);
+        if (!public_key || RAND_bytes(public_key, public_key_size) != RAND_OK)
         {
             printf("%s:%s:%d Failed to create cek iv. Error = 0x%x (%s)\n",
                    __FILE__, __func__, __LINE__, rc, "Content encryption failed!");
@@ -1592,6 +1590,7 @@ create_kek(TALLOC_CTX *parent_ctx,
 
             goto error_exit;
         }
+        // TODO: Cleanup or allocate random bytes.
     }
 
     struct KeyEnvelope *key_identifier = talloc_zero(mem_ctx, struct KeyEnvelope);
