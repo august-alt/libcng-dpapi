@@ -1784,7 +1784,8 @@ create_blob(const uint8_t *data,
             const uint32_t data_size,
             const uint8_t *key_envelope,
             const uint32_t key_envelope_size,
-            const void *security_descriptor,
+            const uint8_t *target_sd,
+            const uint32_t target_sd_size,
             uint8_t **encrypted_data,
             uint32_t *encrypted_data_size)
 {

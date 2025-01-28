@@ -202,7 +202,14 @@ ncrypt_protect_secret(const void *security_descriptor,
         goto cleanup;
     }
 
-    rc = create_blob(data, data_size, key_envelope, key_envelope_size, security_descriptor, encrypted_data, encrypted_data_size);
+    rc = create_blob(data,
+                     data_size,
+                     key_envelope,
+                     key_envelope_size,
+                     target_sd,
+                     target_sd_len,
+                     encrypted_data,
+                     encrypted_data_size);
 
 cleanup:
     talloc_free(mem_ctx);
