@@ -55,3 +55,10 @@ target_link_libraries(${LIBRARY_NAME} PUBLIC
     PkgConfig::GnuTLS
     PkgConfig::OpenSSL
 )
+
+# Soname
+set_target_properties(${LIBRARY_NAME} PROPERTIES VERSION "${LIB_CNG_DPAPI_VERSION}" SOVERSION "${LIB_CNG_DPAPI_VERSION_MAJOR}")
+
+# Installation
+install(TARGETS ${LIBRARY_NAME} DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(FILES ${PUBLIC_HEADERS} DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/cng-dpapi")
