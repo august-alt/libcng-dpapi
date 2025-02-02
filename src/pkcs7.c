@@ -19,6 +19,7 @@
 ***********************************************************************************************************************/
 
 #include <stdint.h>
+#include <errno.h>
 
 #include "pkcs7/ContentInfo.h"
 #include "pkcs7/EnvelopedData.h"
@@ -41,7 +42,8 @@ EnvelopedData_t *unpack_ContentInfo(
     if (rval.code != RC_OK)
     {
         printf("%s:%s:%d Failed to decode ContentInfo object. Error = 0x%x (%s)\n",
-               __FILE__, __func__, __LINE__, rval.code, "");
+               __FILE__, __func__, __LINE__, rval.code, strerror(errno));
+        return NULL;
     }
 
     uint32_t consumed_first = rval.consumed;
@@ -51,7 +53,7 @@ EnvelopedData_t *unpack_ContentInfo(
     if (rval.code != RC_OK)
     {
         printf("%s:%s:%d Failed to decode EnvelopedData object. Error = 0x%x (%s)\n",
-               __FILE__, __func__, __LINE__, rval.code, "");
+               __FILE__, __func__, __LINE__, rval.code, strerror(errno));
     }
 
     if (envelopedData->recipientInfos.list.count != 1
