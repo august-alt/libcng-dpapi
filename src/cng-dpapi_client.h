@@ -21,6 +21,10 @@
 #ifndef CNG_DPAPI_CLIENT_H
 #define CNG_DPAPI_CLIENT_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdint.h>
 
 uint32_t
@@ -41,5 +45,9 @@ ncrypt_protect_secret(const void* security_descriptor,
                       const char* server,
                       const char* domain,
                       const char* username);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif//CNG_DPAPI_CLIENT_H
