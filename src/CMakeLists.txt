@@ -25,12 +25,14 @@ set(PUBLIC_HEADERS
 set(PRIVATE_HEADERS
     blob_p.h
     pkcs7_p.h
+    protection_descriptor_p.h
 )
 
 set(SOURCES
     blob.c
     cng-dpapi_client.c
     pkcs7.c
+    protection_descriptor.c
 )
 
 set(SOURCES ${PRIVATE_HEADERS} ${PUBLIC_HEADERS} ${SOURCES})
