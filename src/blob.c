@@ -50,6 +50,8 @@
 #include "pkcs7/EnvelopedData.h"
 #include "pkcs7/MyKeyInfo.h"
 
+#include "protection_descriptor_p.h"
+
 const uint8_t KDS_SERVICE_LABEL[] = { 0x4b, 0x00, 0x44, 0x00, 0x53, 0x00, 0x20, 0x00, 0x73, 0x00, 0x65, 0x00, 0x72, 0x00, 0x76, 0x00, 0x69, 0x00, 0x63, 0x00, 0x65, 0x00, 0x00, 0x00 };
 const uint8_t KDS_PUBLIC_KEY_LABEL[] = { 0x4b, 0x00, 0x44, 0x00, 0x53, 0x00, 0x20, 0x00, 0x70, 0x00, 0x75, 0x00, 0x62, 0x00, 0x6c, 0x00, 0x69, 0x00, 0x63, 0x00, 0x20, 0x00, 0x6b, 0x00, 0x65, 0x00, 0x79, 0x00, 0x00, 0x00 };
 
@@ -110,8 +112,6 @@ blob_unpack(
         goto error_exit;
     }
 
-    // TODO: Check encrypted content according to blob.py#L310
-
     DATA_BLOB data_blob;
     data_blob.data = kekInfo->kekid.keyIdentifier.buf;
     data_blob.length = kekInfo->kekid.keyIdentifier.size;
@@ -124,9 +124,29 @@ blob_unpack(
         goto error_exit;
     }
 
-    const char target_sd[] = { 0x01, 0x00, 0x04, 0x80, 0x54, 0x00, 0x00, 0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x02, 0x00, 0x40, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x24, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x15, 0x00, 0x00, 0x00, 0x08, 0x70, 0x66, 0x99, 0x73, 0xf4, 0xc7, 0xf5, 0x08, 0x6e, 0x25, 0x31, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x14, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x12, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x12, 0x00, 0x00, 0x00 };
+    ProtectionDescriptor_t *descriptor = NULL;
 
-    uint32_t target_sd_size = sizeof(target_sd);
+    if (unpack_single_protection_descriptor(kekInfo->kekid.other->keyAttr->buf,
+                                            kekInfo->kekid.other->keyAttr->size,
+                                            &descriptor) != 0)
+    {
+        printf("%s:%s:%d Failed to decode ProtectionDescriptor_t object!\n",
+               __FILE__, __func__, __LINE__);
+
+        goto error_exit;
+
+    }
+
+    uint8_t *target_sd = NULL;
+    uint32_t target_sd_size = 0;
+
+    if (create_security_descriptor_from_protection_descriptor(mem_ctx,
+                                                              descriptor,
+                                                              &target_sd_size,
+                                                              &target_sd))
+    {
+        goto error_exit;
+    }
 
     result->protection_descriptor.target_sd = talloc_memdup(mem_ctx, target_sd, target_sd_size);
     result->protection_descriptor.target_sd_len = target_sd_size;
@@ -139,7 +159,6 @@ blob_unpack(
             ? talloc_memdup(mem_ctx, kekInfo->keyEncryptionAlgorithm.parameters->buf,
                             kekInfo->keyEncryptionAlgorithm.parameters->size)
             : NULL;
-
 
     result->enc_content = envelopedData->encryptedContentInfo.encryptedContent->buf;
     result->enc_content_size = envelopedData->encryptedContentInfo.encryptedContent->size;
@@ -1235,8 +1254,8 @@ content_encrypt(TALLOC_CTX* mem_ctx,
         goto error_exit;
     }
 
-    printf("Ciphertext:\n");
-    BIO_dump_fp(stdout, *out, *out_length);
+    // printf("Ciphertext:\n");
+    // BIO_dump_fp(stdout, *out, *out_length);
 
     uint32_t tmp_length = 0;
 
@@ -1264,8 +1283,8 @@ content_encrypt(TALLOC_CTX* mem_ctx,
     }
 
     /* Output tag */
-    printf("Tag:\n");
-    BIO_dump_fp(stdout, tag, tag_length);
+    // printf("Tag:\n");
+    // BIO_dump_fp(stdout, tag, tag_length);
 
     memcpy(*out + *out_length, tag, tag_length);
 
@@ -1345,8 +1364,8 @@ cek_encrypt(TALLOC_CTX *mem_ctx,
     *encrypted_cek_size += tmplen;
 
     /* Output encrypted block */
-    printf("Ciphertext (outlen:%d):\n", *encrypted_cek_size);
-    BIO_dump_fp(stdout, *encrypted_cek, *encrypted_cek_size);
+    // printf("Ciphertext (outlen:%d):\n", *encrypted_cek_size);
+    // BIO_dump_fp(stdout, *encrypted_cek, *encrypted_cek_size);
 
     rc = 0;
 
@@ -1728,8 +1747,7 @@ error_exit:
 
 int32_t
 pack_blob(const struct KeyEnvelope *key_identifier,
-          const uint8_t *target_sd,
-          const uint32_t target_sd_size,
+          const ProtectionDescriptor_t *descriptor,
           const uint8_t *encrypted_cek,
           const uint32_t encrypted_cek_size,
           const uint8_t *encrypted_content,
@@ -1740,6 +1758,7 @@ pack_blob(const struct KeyEnvelope *key_identifier,
           uint8_t **out)
 {
     int32_t rc = -1;
+    ssize_t encoded = 0;
 
     TALLOC_CTX *mem_ctx = talloc_named(NULL, 0, "create_blob");
     if (!mem_ctx)
@@ -1758,8 +1777,21 @@ pack_blob(const struct KeyEnvelope *key_identifier,
 
     ALLOC_OR_ERROR_EXIT(mem_ctx, OtherKeyAttribute_t, other_key_attribute, "Content packing failed!");
     other_key_attribute->keyAttr = key_attribute; // TODO: View content of descriptor here!
-    // other_key_attribute->keyAttr->buf = talloc_memdup(mem_ctx, target_sd, target_sd_size);
-    // other_key_attribute->keyAttr->size = (int)target_sd_size;
+
+    uint8_t *descriptor_encoded = encode_type(mem_ctx,
+                                              &asn_DEF_ProtectionDescriptor,
+                                              (void*)descriptor,
+                                              &encoded);
+    other_key_attribute->keyAttr->size = (int)encoded;
+    if (!descriptor_encoded)
+    {
+        printf("%s:%s:%d Failed to encode ProtectionDescriptor_t object.\n",
+               __FILE__, __func__, __LINE__);
+        goto error_exit;
+    }
+
+    other_key_attribute->keyAttr->buf = talloc_memdup(mem_ctx, descriptor_encoded, encoded);
+
     other_key_attribute->keyAttrId.buf = talloc_strdup(mem_ctx, MICROSOFT_SOFTWARE_OID);
     other_key_attribute->keyAttrId.size = strlen(MICROSOFT_SOFTWARE_OID);
 
@@ -1804,16 +1836,16 @@ pack_blob(const struct KeyEnvelope *key_identifier,
     kekInfo->encryptedKey.buf = talloc_memdup(mem_ctx, encrypted_cek, encrypted_cek_size); // TODO: Check for results of memory and string duplication.
     kekInfo->encryptedKey.size = encrypted_cek_size;
 
-    asn_fprint(stdout, &asn_DEF_KEKRecipientInfo, kekInfo);
+    // asn_fprint(stdout, &asn_DEF_KEKRecipientInfo, kekInfo);
 
     ALLOC_OR_ERROR_EXIT(mem_ctx, MyKeyInfo_t, my_key_info, "Content packing failed!");
     my_key_info->modulus = 16;
     my_key_info->iv.buf = (uint8_t*)cek_iv;
     my_key_info->iv.size = cek_iv_size;
 
-    asn_fprint(stdout, &asn_DEF_MyKeyInfo, my_key_info);
+    // asn_fprint(stdout, &asn_DEF_MyKeyInfo, my_key_info);
 
-    asn_fprint(stdout, &asn_DEF_RecipientInfo, recInfo);
+    // asn_fprint(stdout, &asn_DEF_RecipientInfo, recInfo);
 
     ALLOC_OR_ERROR_EXIT(mem_ctx, EnvelopedData_t, enveloped_data, "Content packing failed!");
     enveloped_data->version = CMSVersion_v2;
@@ -1835,7 +1867,6 @@ pack_blob(const struct KeyEnvelope *key_identifier,
     encrypted_content_info->contentType.size = strlen(CONTENT_TYPE_DATA_OID);
     encrypted_content_info->encryptedContent = encrypted_content_s;
 
-    ssize_t encoded = 0;
 
     ALLOC_OR_ERROR_EXIT(mem_ctx, ANY_t, content_encryption_algorithm_parameters, "Content packing failed!");
     encrypted_content_info->contentEncryptionAlgorithm.parameters = content_encryption_algorithm_parameters;
@@ -1848,8 +1879,8 @@ pack_blob(const struct KeyEnvelope *key_identifier,
 
         goto error_exit;
     }
-   content_encryption_algorithm_parameters->buf = talloc_memdup(mem_ctx, buffer, encoded);
-   content_encryption_algorithm_parameters->size = (int)encoded;
+    content_encryption_algorithm_parameters->buf = talloc_memdup(mem_ctx, buffer, encoded);
+    content_encryption_algorithm_parameters->size = (int)encoded;
 
     buffer = encode_type(mem_ctx, &asn_DEF_RecipientInfo, recInfo, &encoded);
     if (!buffer)
@@ -1860,11 +1891,11 @@ pack_blob(const struct KeyEnvelope *key_identifier,
         goto error_exit;
     }
 
-    for (ssize_t i = 0; i < encoded; i++)
-    {
-        printf("%02x ", buffer[i]);
-    }
-    printf("\n");
+    // for (ssize_t i = 0; i < encoded; i++)
+    // {
+    //     printf("%02x ", buffer[i]);
+    // }
+    // printf("\n");
 
     ALLOC_OR_ERROR_EXIT(mem_ctx, ContentInfo_t, content_info, "Content packing failed!");
     content_info->contentType.buf = talloc_strdup(mem_ctx, CONTENT_TYPE_ENVELOPED_DATA_OID);
@@ -1873,7 +1904,7 @@ pack_blob(const struct KeyEnvelope *key_identifier,
     char error[1024] = {};
     size_t error_size = 1024;
 
-    asn_fprint(stdout, &asn_DEF_EnvelopedData, enveloped_data);
+    // asn_fprint(stdout, &asn_DEF_EnvelopedData, enveloped_data);
 
     asn_check_constraints(&asn_DEF_EnvelopedData, enveloped_data, error, &error_size);
     printf("%s\n", error);
@@ -1887,11 +1918,11 @@ pack_blob(const struct KeyEnvelope *key_identifier,
         goto error_exit;
     }
 
-    for (ssize_t i = 0; i < encoded; i++)
-    {
-        printf("%02x ", buffer[i]);
-    }
-    printf("\n");
+    // for (ssize_t i = 0; i < encoded; i++)
+    // {
+    //     printf("%02x ", buffer[i]);
+    // }
+    // printf("\n");
 
     content_info->content.buf = talloc_memdup(mem_ctx, buffer, encoded);
     content_info->content.size = encoded;
@@ -1905,16 +1936,16 @@ pack_blob(const struct KeyEnvelope *key_identifier,
         goto error_exit;
     }
 
-    asn_fprint(stdout, &asn_DEF_ContentInfo, content_info);
+    // asn_fprint(stdout, &asn_DEF_ContentInfo, content_info);
 
     uint8_t *mbuffer = malloc(encoded);
     memcpy(mbuffer, buffer, encoded);
 
-    for (ssize_t i = 0; i < encoded; i++)
-    {
-        printf("%02x ", buffer[i]);
-    }
-    printf("\n");
+    // for (ssize_t i = 0; i < encoded; i++)
+    // {
+    //     printf("%02x ", buffer[i]);
+    // }
+    // printf("\n");
 
     *size = encoded;
     *out = mbuffer;
@@ -1932,8 +1963,7 @@ create_blob(const uint8_t *data,
             const uint32_t data_size,
             const uint8_t *key_envelope,
             const uint32_t key_envelope_size,
-            const uint8_t *target_sd,
-            const uint32_t target_sd_size,
+            ProtectionDescriptor_t *descriptor,
             uint8_t **encrypted_data,
             uint32_t *encrypted_data_size)
 {
@@ -2013,8 +2043,7 @@ create_blob(const uint8_t *data,
     }
 
     if (pack_blob(key_id,
-                  target_sd,
-                  target_sd_size,
+                  descriptor,
                   encrypted_cek,
                   encrypted_cek_size,
                   encrypted_content,

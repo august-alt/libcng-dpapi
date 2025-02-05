@@ -24,6 +24,8 @@
 #include <stdint.h>
 #include <gkdi/ndr_gkdi.h>
 
+#include "pkcs7/ProtectionDescriptor.h"
+
 enum ProtectionDescriptorType
 {
     SID,
@@ -32,7 +34,7 @@ enum ProtectionDescriptorType
     LOCAL,
 };
 
-struct ProtectionDescriptor
+struct MyProtectionDescriptor
 {
     enum ProtectionDescriptorType type;
     char* value;
@@ -45,7 +47,7 @@ struct KeyEnvelope;
 typedef struct blob
 {
     struct KeyEnvelope key_identifier;
-    struct ProtectionDescriptor protection_descriptor;
+    struct MyProtectionDescriptor protection_descriptor;
     uint8_t* enc_cek;
     uint32_t enc_cek_size;
     char* enc_cek_algorithm;
@@ -66,8 +68,7 @@ create_blob(const uint8_t* data,
             const uint32_t data_size,
             const uint8_t* key_envelope,
             const uint32_t key_envelope_size,
-            const uint8_t *target_sd,
-            const uint32_t target_sd_size,
+            ProtectionDescriptor_t *descriptor,
             uint8_t **encrypted_data,
             uint32_t *encrypted_data_size);
 
