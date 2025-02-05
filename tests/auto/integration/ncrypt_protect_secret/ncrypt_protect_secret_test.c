@@ -24,7 +24,18 @@ int main(int argc, char ** argv)
     const uint8_t test_data_bytes[] = { 0x48, 0x00, 0x65, 0x00, 0x6c, 0x00, 0x6c, 0x00, 0x6f, 0x00, 0x20, 0x00, 0x57, 0x00, 0x6f, 0x00, 0x72, 0x00, 0x6c, 0x00, 0x64, 0x00, 0x21, 0x00, 0x00, 0x00 };
     const uint32_t test_data_size = sizeof(test_data_bytes);
 
-    status = ncrypt_protect_secret(NULL,
+    ProtectionDescriptor_p descriptor = NULL;
+
+    status = ncrypt_create_protection_descriptor("SID=S-1-5-21-2573627400-4123522163-824536584-500",
+                                                 0,
+                                                 &descriptor);
+    if (status != 0)
+    {
+        printf("Failed to create descriptor: %d\n", status);
+        goto error_exit;
+    }
+
+    status = ncrypt_protect_secret(descriptor,
                                    test_data_bytes,
                                    test_data_size,
                                    &protected_secret,
