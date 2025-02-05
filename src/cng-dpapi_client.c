@@ -25,6 +25,7 @@
 #include <gkdi/ndr_gkdi_c.h>
 
 #include "blob_p.h"
+#include "protection_descriptor_p.h"
 
 static uint32_t
 create_rpc_binding(TALLOC_CTX *parent_ctx,
@@ -143,7 +144,7 @@ ncrypt_unprotect_secret(const uint8_t *data,
 }
 
 uint32_t
-ncrypt_protect_secret(const void *security_descriptor,
+ncrypt_protect_secret(const ProtectionDescriptor_p protection_descriptor,
                       const uint8_t* data,
                       const uint32_t data_size,
                       uint8_t **encrypted_data,
@@ -155,7 +156,7 @@ ncrypt_protect_secret(const void *security_descriptor,
     uint32_t rc = 0;
     TALLOC_CTX *mem_ctx = talloc_named(NULL, 0, "ncrypt_protect_secret");
     struct dcerpc_pipe* pipe = NULL;
-    NTSTATUS status = {0};
+    NTSTATUS status = {0};    
 
     if (create_rpc_binding(mem_ctx, &pipe, server, domain, username) == -1)
     {
@@ -172,9 +173,17 @@ ncrypt_protect_secret(const void *security_descriptor,
     const int32_t l0_index = -1, l1_index = -1, l2_index = -1;
     struct GUID *root_key_id = NULL;
 
-    // TODO: Create security descriptor.
-    uint8_t target_sd[] = { 0x01, 0x00, 0x04, 0x80, 0x54, 0x00, 0x00, 0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x02, 0x00, 0x40, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x24, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x15, 0x00, 0x00, 0x00, 0x08, 0x70, 0x66, 0x99, 0x73, 0xf4, 0xc7, 0xf5, 0x08, 0x6e, 0x25, 0x31, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x14, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x12, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x12, 0x00, 0x00, 0x00 };
-    uint32_t target_sd_len = sizeof(target_sd);
+    uint8_t *target_sd = NULL;
+    uint32_t target_sd_len = 0;
+
+    if (create_security_descriptor_from_protection_descriptor(mem_ctx,
+                                                              protection_descriptor,
+                                                              &target_sd_len,
+                                                              &target_sd))
+    {
+        rc = -1;
+        goto cleanup;
+    }
 
     status = dcerpc_GetKey(pipe->binding_handle,
                            mem_ctx,
@@ -206,13 +215,28 @@ ncrypt_protect_secret(const void *security_descriptor,
                      data_size,
                      key_envelope,
                      key_envelope_size,
-                     target_sd,
-                     target_sd_len,
+                     protection_descriptor,
                      encrypted_data,
                      encrypted_data_size);
 
 cleanup:
     talloc_free(mem_ctx);
+
+    return rc;
+}
+
+uint32_t
+ncrypt_create_protection_descriptor(const char *desciptor_string,
+                                    uint32_t flags,
+                                    ProtectionDescriptor_p *desciptor)
+{
+    (void)flags;
+    uint32_t rc = 0;
+
+    if (create_protection_descriptor(desciptor_string, desciptor) || !*desciptor)
+    {
+        rc = -1;
+    }
 
     return rc;
 }

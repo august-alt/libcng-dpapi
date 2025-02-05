@@ -27,6 +27,13 @@ extern "C" {
 
 #include <stdint.h>
 
+typedef struct ProtectionDescriptor *ProtectionDescriptor_p;
+
+uint32_t
+ncrypt_create_protection_descriptor(const char *desciptor_string,
+                                    uint32_t flags,
+                                    ProtectionDescriptor_p *desciptor);
+
 uint32_t
 ncrypt_unprotect_secret(const uint8_t* data,
                         const uint32_t data_size,
@@ -37,7 +44,7 @@ ncrypt_unprotect_secret(const uint8_t* data,
                         const char* username);
 
 uint32_t
-ncrypt_protect_secret(const void* security_descriptor,
+ncrypt_protect_secret(const ProtectionDescriptor_p protection_descriptor,
                       const uint8_t* data,
                       const uint32_t data_size,
                       uint8_t **encrypted_data,
