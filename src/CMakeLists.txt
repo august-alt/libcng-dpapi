@@ -9,7 +9,6 @@ pkg_check_modules(SambaHostconfig REQUIRED IMPORTED_TARGET samba-hostconfig)
 pkg_check_modules(SambaUtil REQUIRED IMPORTED_TARGET samba-util)
 pkg_check_modules(Krb5GssAPI REQUIRED IMPORTED_TARGET krb5-gssapi)
 
-pkg_check_modules(GnuTLS REQUIRED IMPORTED_TARGET gnutls)
 pkg_check_modules(OpenSSL REQUIRED IMPORTED_TARGET openssl)
 
 set(LIBRARY_NAME cng-dpapi)
@@ -54,7 +53,6 @@ target_link_libraries(${LIBRARY_NAME} PUBLIC
 )
 
 target_link_libraries(${LIBRARY_NAME} PUBLIC
-    PkgConfig::GnuTLS
     PkgConfig::OpenSSL
 )
 

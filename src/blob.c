@@ -28,11 +28,6 @@
 
 #include <gkdi/ndr_gkdi.h>
 
-#include <gnutls/gnutls.h>
-#include <gnutls/x509.h>
-#include <gnutls/crypto.h>
-#include <gnutls/abstract.h>
-
 #include <openssl/bio.h>
 #include <openssl/param_build.h>
 
@@ -69,6 +64,12 @@ const uint8_t ECDH_UTF_16_LE[] = {};
 #define AES256_GCM_OID "2.16.840.1.101.3.4.1.46"
 
 #define MAX_BUFFER_SIZE 16384
+
+typedef struct
+{
+    uint8_t *data;
+    uint32_t size;
+} gnutls_datum_t;
 
 blob_t *
 blob_unpack(
