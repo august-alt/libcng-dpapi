@@ -2,15 +2,16 @@
 
 Name: libcng-dpapi
 Version: 0.0.2
-Release: alt1
+Release: alt2
 
 Summary: Client library for CNG-DPAPI
 License: GPLv2+
-Group: Development
+Group: Development/C
 Url: https://github.com/august-alt/libcng-dpapi
 
 BuildRequires: rpm-macros-cmake cmake cmake-modules gcc-c++
 BuildRequires: libkrb5-devel samba-devel samba-common-libs libgkdi-devel
+BuildRequires: libssl-devel libldap-devel libsasl2-devel
 BuildRequires: doxygen
 
 Requires: cmake
@@ -51,6 +52,10 @@ develop programs which make use of %name
 %_libdir/cng-dpapi/CNGDpApiConfig.cmake
 
 %changelog
+* Fri Mar 14 2025 Vladimir Rubanov <august@altlinux.org> 0.0.2-alt2
+- 0.0.2-alt2
+- Update build dependencies
+
 * Sun Feb 02 2025 Vladimir Rubanov <august@altlinux.org> 0.0.2-alt1
 - 0.0.2-alt1
 - Update packaging
