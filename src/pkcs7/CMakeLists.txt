@@ -5,4 +5,4 @@ file(GLOB SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/*.c")
 
 add_library(${LIBRARY_NAME} STATIC ${SOURCES} ${HEADERS})
 set_property(TARGET ${LIBRARY_NAME} PROPERTY POSITION_INDEPENDENT_CODE ON)
-target_include_directories(${LIBRARY_NAME} PRIVATE "/usr/local/share/asn1c/")
+target_include_directories(${LIBRARY_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
