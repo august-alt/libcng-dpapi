@@ -25,12 +25,14 @@ set(PUBLIC_HEADERS
 set(PRIVATE_HEADERS
     blob_p.h
     pkcs7_p.h
+    protection_descriptor_p.h
 )
 
 set(SOURCES
     blob.c
     cng-dpapi_client.c
     pkcs7.c
+    protection_descriptor.c
 )
 
 set(SOURCES ${PRIVATE_HEADERS} ${PUBLIC_HEADERS} ${SOURCES})
@@ -39,7 +41,7 @@ add_library(${LIBRARY_NAME} SHARED ${SOURCES})
 target_link_libraries(${LIBRARY_NAME} PUBLIC ${GKDI_LIBRARY})
 target_link_libraries(${LIBRARY_NAME} PUBLIC pkcs7)
 
-target_include_directories(${LIBRARY_NAME} PRIVATE "/usr/local/share/asn1c/")
+target_include_directories(${LIBRARY_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/pkcs7")
 
 target_link_libraries(${LIBRARY_NAME} PUBLIC
     PkgConfig::Ndr
@@ -55,3 +57,10 @@ target_link_libraries(${LIBRARY_NAME} PUBLIC
     PkgConfig::GnuTLS
     PkgConfig::OpenSSL
 )
+
+# Soname
+set_target_properties(${LIBRARY_NAME} PROPERTIES VERSION "${LIB_CNG_DPAPI_GEAR_VERSION}" SOVERSION "${LIB_CNG_DPAPI_VERSION_MAJOR}")
+
+# Installation
+install(TARGETS ${LIBRARY_NAME} DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(FILES ${PUBLIC_HEADERS} DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/cng-dpapi")

@@ -21,7 +21,18 @@
 #ifndef CNG_DPAPI_CLIENT_H
 #define CNG_DPAPI_CLIENT_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdint.h>
+
+typedef struct ProtectionDescriptor *ProtectionDescriptor_p;
+
+uint32_t
+ncrypt_create_protection_descriptor(const char *desciptor_string,
+                                    uint32_t flags,
+                                    ProtectionDescriptor_p *desciptor);
 
 uint32_t
 ncrypt_unprotect_secret(const uint8_t* data,
@@ -31,5 +42,19 @@ ncrypt_unprotect_secret(const uint8_t* data,
                         const char* server,
                         const char *domain,
                         const char* username);
+
+uint32_t
+ncrypt_protect_secret(const ProtectionDescriptor_p protection_descriptor,
+                      const uint8_t* data,
+                      const uint32_t data_size,
+                      uint8_t **encrypted_data,
+                      uint32_t *encrypted_data_size,
+                      const char* server,
+                      const char* domain,
+                      const char* username);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif//CNG_DPAPI_CLIENT_H

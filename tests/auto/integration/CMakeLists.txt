@@ -1,0 +1,2 @@
+add_subdirectory(ncrypt_protect_secret)
+add_subdirectory(ncrypt_unprotect_secret)

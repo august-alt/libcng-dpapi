@@ -34,21 +34,23 @@ typedef enum Member_PR {
 /* Forward declarations */
 struct GeneralNames;
 
+typedef struct Member {
+    Member_PR present;
+    union IetfAttrSyntax__values__Member_u {
+        OCTET_STRING_t	 octets;
+        OBJECT_IDENTIFIER_t	 oid;
+        UTF8String_t	 string;
+    } choice;
+
+    /* Context for parsing across buffer boundaries */
+    asn_struct_ctx_t _asn_ctx;
+} Member_t;
+
 /* IetfAttrSyntax */
 typedef struct IetfAttrSyntax {
 	struct GeneralNames	*policyAuthority	/* OPTIONAL */;
 	struct values {
-		A_SEQUENCE_OF(struct Member {
-			Member_PR present;
-			union IetfAttrSyntax__values__Member_u {
-				OCTET_STRING_t	 octets;
-				OBJECT_IDENTIFIER_t	 oid;
-				UTF8String_t	 string;
-			} choice;
-			
-			/* Context for parsing across buffer boundaries */
-			asn_struct_ctx_t _asn_ctx;
-		} ) list;
+        A_SEQUENCE_OF(struct Member) list;
 		
 		/* Context for parsing across buffer boundaries */
 		asn_struct_ctx_t _asn_ctx;

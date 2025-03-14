@@ -1,0 +1,17 @@
+ProtectionDescriptorModule DEFINITIONS ::= BEGIN
+
+ProtectionDescriptor ::= SEQUENCE {
+  descriptorType       DescriptorType,
+  attrs                SEQUENCE OF ProviderAttributes
+}
+
+DescriptorType ::= OBJECT IDENTIFIER
+
+ProviderAttributes ::= SEQUENCE OF ProviderAttribute
+
+ProviderAttribute ::= SEQUENCE {
+      providerName      UTF8String,
+      providerValue     UTF8String
+}
+
+END

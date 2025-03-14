@@ -18,15 +18,27 @@
 **
 ***********************************************************************************************************************/
 
-#ifndef PKCS7_H
-#define PKCS7_H
+#ifndef PROTECTION_DESCRIPTOR_H
+#define PROTECTION_DESCRIPTOR_H
 
+#include <talloc.h>
 #include <stdint.h>
 
-typedef struct EnvelopedData EnvelopedData_t;
+#include "pkcs7/ProtectionDescriptor.h"
 
-EnvelopedData_t *unpack_ContentInfo(
-        const uint8_t* data,
-        const uint32_t size
-        );
-#endif//PKCS7_H
+int32_t
+create_protection_descriptor(const char* descriptor_string,
+                             ProtectionDescriptor_t **descriptor);
+
+int32_t
+unpack_single_protection_descriptor(uint8_t *data,
+                                    uint32_t size,
+                                    ProtectionDescriptor_t **descriptor);
+
+int32_t
+create_security_descriptor_from_protection_descriptor(TALLOC_CTX *parent_ctx,
+                                                      const ProtectionDescriptor_t *descriptor,
+                                                      uint32_t *size,
+                                                      uint8_t **out);
+
+#endif//PROTECTION_DESCRIPTOR_H

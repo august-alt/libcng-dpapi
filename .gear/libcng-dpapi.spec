@@ -1,7 +1,7 @@
 %define _unpackaged_files_terminate_build 1
 
 Name: libcng-dpapi
-Version: 0.0.1
+Version: 0.0.2
 Release: alt1
 
 Summary: Client library for CNG-DPAPI
@@ -20,6 +20,15 @@ Source0: %name-%version.tar
 %description
 Client library for CNG-DPAPI
 
+%package devel
+Summary: CNG-DPAPI Libraries and Header Files
+Group: Development/C
+Requires: %name = %version-%release
+
+%description devel
+%name-devel contains the libraries and header files needed to
+develop programs which make use of %name
+
 %prep
 %setup -q
 
@@ -31,6 +40,9 @@ Client library for CNG-DPAPI
 %cmakeinstall_std
 
 %files
+%_libdir/libcng-dpapi.so.*
+
+%files devel
 %doc README.md
 %doc INSTALL.md
 
@@ -39,6 +51,10 @@ Client library for CNG-DPAPI
 %_libdir/cng-dpapi/CNGDpApiConfig.cmake
 
 %changelog
+* Sun Feb 02 2025 Vladimir Rubanov <august@altlinux.org> 0.0.2-alt1
+- 0.0.2-alt1
+- Update packaging
+
 * Sun May 12 2024 Vladimir Rubanov <august@altlinux.org> 0.0.1-alt1
 - 0.0.1-alt1
 - Initial build

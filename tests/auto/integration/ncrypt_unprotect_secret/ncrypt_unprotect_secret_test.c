@@ -181,6 +181,23 @@ get_attribute_value(TALLOC_CTX *mem_ctx,
     return true;
 }
 
+char* to_ascii(const char *in, uint32_t size)
+{
+    char* outbuf = malloc(size / 2 + 1);
+    int counter = 0;
+    for (int i = 0; i < size; ++i)
+    {
+        if (i % 2 != 0)
+        {
+            continue;
+        }
+        outbuf[counter++] = in[i];
+    }
+
+    return outbuf;
+}
+
+
 int main(int argc, char ** argv)
 {
     (void)argc;
@@ -215,9 +232,19 @@ int main(int argc, char ** argv)
     {
         goto error_exit;
     }
+    else
+    {
+        char* text = to_ascii(unprotected_secret, unprotected_secret_size);
+        if (!text)
+        {
+            goto error_exit;
+        }
+        printf("Unprotected secret: %s\n", text);
+        free(text);
+    }
 
 error_exit:
     TALLOC_FREE(mem_ctx);
 
-    return EXIT_FAILURE;
+    return unprotected_secret ? EXIT_SUCCESS : EXIT_FAILURE;
 }
